@@ -18,6 +18,8 @@ SOURCES += \
     manager/windowmanager.cpp \
     model/usermodel.cpp \
     model/videomodel.cpp \
+    service/authpolicy.cpp \
+    service/authsession.cpp \
     service/userservice.cpp \
     service/videoservice.cpp \
     util/dbconn.cpp \
@@ -30,6 +32,8 @@ HEADERS += \
     manager/windowmanager.h \
     model/usermodel.h \
     model/videomodel.h \
+    service/authpolicy.h \
+    service/authsession.h \
     service/userservice.h \
     service/videoservice.h \
     util/dbconn.h \

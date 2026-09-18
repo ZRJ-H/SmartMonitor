@@ -33,7 +33,7 @@ MainWidget::MainWidget(QWidget *parent)
       btn_next_video_page(nullptr),
       video_service(5),
       current_video_page(1),
-      logged_in(false),
+      auth_session(),
       video_layout(nullptr),
       m_timer(nullptr)
 {
@@ -180,7 +180,7 @@ void MainWidget::init_ui()
     video_layout->setSpacing(3);
 
     const QStringList window_names = {
-        "请先点击右上角登录",
+        "实时预览（访客模式）",
         "监控窗口 2",
         "监控窗口 3",
         "监控窗口 4"
@@ -423,7 +423,7 @@ void MainWidget::init_connect()
             this, SLOT(show_setting_page()));
 
     connect(btn_login, SIGNAL(clicked()),
-            this, SLOT(to_login_win()));
+            this, SLOT(handle_login_button()));
 
     connect(btn_one, SIGNAL(clicked()),
             this, SLOT(show_single_window()));
@@ -458,26 +458,36 @@ void MainWidget::show_monitor_page()
 
 void MainWidget::show_playback_page()
 {
-    // 索引 1 对应回放页面。
+    if (!require_permission(AuthPermission::Playback, "查看录像回放")) {
+        btn_monitor_page->setChecked(true);
+        return;
+    }
     page_stack->setCurrentIndex(1);
 }
 
 void MainWidget::show_setting_page()
 {
-    // 索引 2 对应设置页面。
+    if (!require_permission(AuthPermission::Settings, "修改系统设置")) {
+        btn_monitor_page->setChecked(true);
+        return;
+    }
     page_stack->setCurrentIndex(2);
 }
 
-void MainWidget::to_login_win()
+void MainWidget::handle_login_button()
 {
+    if (auth_session.isLoggedIn()) {
+        logout();
+        return;
+    }
     emit login_requested();
 }
 
 void MainWidget::setLoggedInUser(const QString &userName)
 {
-    logged_in = true;
+    auth_session.login(userName);
     lab_login->setText(userName);
-    btn_login->setText("用户");
+    btn_login->setText("退出");
     lab_video_hint->setText("登录成功，请从左侧选择设备开始预览");
 
     // 登录通过后从第一页加载视频文件。
@@ -492,8 +502,7 @@ void MainWidget::load_video_records()
 
 bool MainWidget::load_video_page(int requestedPage)
 {
-    if (!logged_in) {
-        QMessageBox::information(this, "提示", "请先登录，再查询录像记录。");
+    if (!require_permission(AuthPermission::Playback, "查询录像记录")) {
         return false;
     }
 
@@ -517,6 +526,36 @@ bool MainWidget::load_video_page(int requestedPage)
     btn_previous_video_page->setEnabled(page.currentPage > 1);
     btn_next_video_page->setEnabled(page.currentPage < page.totalPages);
     return true;
+}
+
+bool MainWidget::require_permission(AuthPermission permission,
+                                    const QString &actionName)
+{
+    if (auth_session.canAccess(permission)) {
+        return true;
+    }
+
+    QMessageBox::information(
+        this,
+        "需要登录",
+        QString("请先登录，再%1。未登录状态仅允许查看实时画面。")
+            .arg(actionName)
+    );
+    return false;
+}
+
+void MainWidget::logout()
+{
+    auth_session.logout();
+    current_video_page = 1;
+    video_record_list->clear();
+    lab_video_page->setText("第 1 / 1 页，共 0 条");
+    lab_login->setText("未登录");
+    btn_login->setText("登录");
+    lab_video_hint->setText("实时预览（访客模式）");
+    btn_monitor_page->setChecked(true);
+    page_stack->setCurrentIndex(0);
+    QMessageBox::information(this, "退出登录", "已退出，当前为访客模式。");
 }
 
 void MainWidget::load_previous_video_page()

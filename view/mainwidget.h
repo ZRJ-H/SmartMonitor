@@ -2,6 +2,7 @@
 #define MAINWIDGET_H
 
 #include "../service/videoservice.h"
+#include "../service/authsession.h"
 
 #include <QString>
 #include <QWidget>
@@ -36,7 +37,7 @@ private slots:
     void show_setting_page();
 
     // 主界面 → 登录窗口。
-    void to_login_win();
+    void handle_login_button();
 
     // QTimer 每秒触发该槽，用当前时间更新标签。
     void update_time();
@@ -57,6 +58,9 @@ private:
     void init_connect();
     void init_showtime();
     bool load_video_page(int requestedPage);
+    bool require_permission(AuthPermission permission,
+                            const QString &actionName);
+    void logout();
 
     // 顶部导航按钮需要在 init_connect() 中建立页面切换连接。
     QPushButton *btn_monitor_page;
@@ -84,8 +88,8 @@ private:
     VideoService video_service;
     int current_video_page;
 
-    // 未登录时不允许查询监控录像。
-    bool logged_in;
+    // 统一保存登录身份，并由同一个入口判断页面和操作权限。
+    AuthSession auth_session;
 
 
     // 暂用四个 QLabel 模拟四路视频窗口，重点演示 QGridLayout 的切换。

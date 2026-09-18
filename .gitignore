@@ -24,10 +24,10 @@ build*/
 *.pro.user.*
 .vscode/
 .idea/
+.qtc_clangd/
 
 # Runtime data and local secrets
 *.log
 *.db
 *.sqlite
 .env
-

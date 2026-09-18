@@ -69,11 +69,17 @@ LoginWidget::LoginWidget(QWidget *parent)
 
     edit_user->setPlaceholderText("请输入用户名");
     edit_pwd->setPlaceholderText("请输入密码");
-
     // Password 模式只改变界面显示，不等于对密码进行了加密。
     edit_pwd->setEchoMode(QLineEdit::Password);
     form_layout->addRow("用户名：", edit_user);
-    form_layout->addRow("密  码：", edit_pwd);
+
+    QHBoxLayout *password_layout = new QHBoxLayout;
+    QPushButton *btn_show_password = new QPushButton("显示密码");
+    btn_show_password->setCheckable(true);
+    btn_show_password->setMinimumWidth(92);
+    password_layout->addWidget(edit_pwd, 1);
+    password_layout->addWidget(btn_show_password);
+    form_layout->addRow("密  码：", password_layout);
 
     // 验证码这一行中同时放输入框、验证码图片和一个伸缩项。
     QHBoxLayout *vcode_layout = new QHBoxLayout;
@@ -141,6 +147,14 @@ LoginWidget::LoginWidget(QWidget *parent)
     connect(btn_cancel, SIGNAL(clicked()),
             this, SLOT(cancel()));
 
+    connect(btn_show_password, &QPushButton::toggled,
+            this, [this, btn_show_password](bool checked) {
+        edit_pwd->setEchoMode(
+            checked ? QLineEdit::Normal : QLineEdit::Password
+        );
+        btn_show_password->setText(checked ? "隐藏密码" : "显示密码");
+    });
+
     // 函数指针 + Lambda 是现代 connect 写法。
     // this 是 Lambda 的上下文对象，窗口销毁后该连接会自动断开。
     connect(btn_reg, &QPushButton::clicked,
@@ -163,6 +177,24 @@ void LoginWidget::login()
     // 校验失败时立即 return，后续成功逻辑不会继续执行。
     if (user_name.isEmpty() || password.isEmpty()) {
         QMessageBox::warning(this, "提示", "用户名和密码不能为空。");
+        return;
+    }
+    if (!AuthPolicy::isUserNameValid(user_name)) {
+        QMessageBox::warning(
+            this,
+            "账号格式错误",
+            "管理员账号须为 6-10 位字母、数字或下划线。"
+        );
+        edit_user->setFocus();
+        return;
+    }
+    if (!AuthPolicy::isPasswordValid(password)) {
+        QMessageBox::warning(
+            this,
+            "密码格式错误",
+            "密码须为 6-8 位且不能包含空白字符。"
+        );
+        edit_pwd->setFocus();
         return;
     }
 
@@ -191,12 +223,38 @@ void LoginWidget::login()
         return;
     }
 
-    if (result.status == LoginResult::InvalidCredentials) {
-        QMessageBox::warning(this, "登录失败", "用户名或密码错误。");
+    if (result.status == LoginResult::Locked) {
+        const int minutes = (result.lockSeconds + 59) / 60;
+        QMessageBox::warning(
+            this,
+            "账号已锁定",
+            QString("连续 3 次登录失败，该账号已锁定。请在约 %1 分钟后重试。")
+                .arg(minutes)
+        );
         edit_pwd->clear();
         edit_vcode->clear();
         pic_vcode->updateVerificationCode();
         edit_pwd->setFocus();
+        return;
+    }
+
+    if (result.status == LoginResult::InvalidCredentials) {
+        QMessageBox::warning(
+            this,
+            "登录失败",
+            QString("用户名或密码错误，还可尝试 %1 次。")
+                .arg(result.remainingAttempts)
+        );
+        edit_pwd->clear();
+        edit_vcode->clear();
+        pic_vcode->updateVerificationCode();
+        edit_pwd->setFocus();
+        return;
+    }
+
+    if (result.status == LoginResult::InvalidUserNameFormat
+            || result.status == LoginResult::InvalidPasswordFormat) {
+        QMessageBox::warning(this, "登录失败", "账号或密码格式不符合要求。");
         return;
     }
 
