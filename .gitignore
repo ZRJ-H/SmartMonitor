@@ -1,0 +1,33 @@
+# Qt/qmake generated files
+.qmake.stash
+Makefile
+Makefile.*
+object_script.*
+moc_*.cpp
+ui_*.h
+qrc_*.cpp
+*.o
+*.obj
+*.exe
+*.dll
+*.a
+*.lib
+
+# Build output
+bin/
+debug/
+release/
+build*/
+
+# IDE and local machine state
+*.pro.user
+*.pro.user.*
+.vscode/
+.idea/
+
+# Runtime data and local secrets
+*.log
+*.db
+*.sqlite
+.env
+

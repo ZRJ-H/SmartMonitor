@@ -1,0 +1,7 @@
+<RCC>
+    <!-- prefix="/" 表示资源根路径。 -->
+    <!-- 文件编译进程序后，通过 :/picture/OIP-C3.webp 访问。 -->
+    <qresource prefix="/">
+        <file>picture/OIP-C3.webp</file>
+    </qresource>
+</RCC>
