@@ -58,4 +58,9 @@ else: unix:!android: target.path = /opt/$${TARGET}/bin
 
 DESTDIR = $$PWD/bin
 
+win32 {
+    OPENCV_RUNTIME_DLL = E:/opencv/install/x64/mingw/bin/libopencv_world4140.dll
+    QMAKE_POST_LINK += $$QMAKE_COPY $$shell_path($$OPENCV_RUNTIME_DLL) $$shell_path($$DESTDIR)
+}
+
 RESOURCES += resources.qrc
