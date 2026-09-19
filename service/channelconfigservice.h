@@ -7,6 +7,7 @@
 #include <QList>
 #include <QString>
 
+// 通道配置业务层：组合默认值、校验规则和数据库读写。
 class ChannelConfigService
 {
 public:

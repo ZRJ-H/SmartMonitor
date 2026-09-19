@@ -3,6 +3,7 @@
 
 #include <QString>
 
+// sys_config 表的数据访问层，只负责按键读取和保存字符串配置。
 class ConfigModel
 {
 public:

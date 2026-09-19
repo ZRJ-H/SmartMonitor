@@ -6,6 +6,8 @@
 #include <QList>
 #include <QString>
 
+// 集中管理通道默认值、业务校验以及 JSON 序列化规则。
+// 将这些规则放在界面之外，便于复用和单元测试。
 class ChannelConfigPolicy
 {
 public:

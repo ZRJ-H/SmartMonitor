@@ -109,6 +109,7 @@ private:
     QGridLayout *video_layout;
     QTimer *m_timer;
 
+    // 四组配置控件与 channel_configs_ 的下标一一对应。
     QLineEdit *channel_name_edits_[4];
     QComboBox *channel_source_boxes_[4];
     QComboBox *channel_camera_boxes_[4];
@@ -118,6 +119,7 @@ private:
     QList<ChannelConfig> channel_configs_;
     ChannelConfigService channel_config_service_;
 
+    // 每个通道拥有独立线程和任务，一个数据源失败不会阻塞其他通道。
     QThread *monitor_threads_[4];
     MonitorTask *monitor_tasks_[4];
     bool preview_running_[4];

@@ -6,6 +6,7 @@
 
 QList<ChannelConfig> ChannelConfigPolicy::defaults()
 {
+    // 首次运行时默认让通道 1 使用摄像头，其余通道等待选择视频文件。
     QList<ChannelConfig> configs;
     for (int channelId = 1; channelId <= 4; ++channelId) {
         ChannelConfig config;
@@ -24,6 +25,7 @@ bool ChannelConfigPolicy::validateAssignments(
         const QList<ChannelConfig> &configs,
         QString &errorText)
 {
+    // 保存前检查整组配置，避免重复通道或多个通道抢占同一摄像头。
     errorText.clear();
     if (configs.size() != 4) {
         errorText = QStringLiteral("必须配置 4 个监控通道");
@@ -66,6 +68,7 @@ bool ChannelConfigPolicy::validateAssignments(
 bool ChannelConfigPolicy::validateForStart(const ChannelConfig &config,
                                             QString &errorText)
 {
+    // 启动预览只校验当前通道所需的数据源，不影响其他通道独立运行。
     errorText.clear();
     if (config.sourceType == ChannelSourceType::Camera) {
         if (config.cameraIndex < 0) {
@@ -84,6 +87,7 @@ bool ChannelConfigPolicy::validateForStart(const ChannelConfig &config,
 
 QString ChannelConfigPolicy::encode(const ChannelConfig &config)
 {
+    // 每个通道编码为紧凑 JSON，再作为 sys_config 的字符串值保存。
     QJsonObject object;
     object.insert(QStringLiteral("channelId"), config.channelId);
     object.insert(QStringLiteral("name"), config.name);
@@ -100,6 +104,7 @@ bool ChannelConfigPolicy::decode(const QString &json,
                                  ChannelConfig &config,
                                  QString &errorText)
 {
+    // 先解析到临时对象；只有全部字段合法时才覆盖调用方的配置。
     errorText.clear();
     QJsonParseError parseError;
     const QJsonDocument document = QJsonDocument::fromJson(

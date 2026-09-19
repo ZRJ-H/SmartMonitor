@@ -688,6 +688,7 @@ void MainWidget::show_multi_window()
 
 void MainWidget::init_workers()
 {
+    // cv::Mat 需要注册后才能作为参数通过 Qt 的跨线程队列信号传递。
     qRegisterMetaType<cv::Mat>("cv::Mat");
     for (int i = 0; i < 4; ++i) {
         monitor_threads_[i] = new QThread(this);
@@ -696,6 +697,7 @@ void MainWidget::init_workers()
 
         connect(monitor_threads_[i], &QThread::finished,
                 monitor_tasks_[i], &QObject::deleteLater);
+        // 强制使用队列连接：采集在线程中执行，界面更新始终回到主线程。
         connect(monitor_tasks_[i], &MonitorTask::frameReady,
                 this, &MainWidget::display_frame, Qt::QueuedConnection);
         connect(monitor_tasks_[i], &MonitorTask::captureStateChanged,
@@ -711,6 +713,7 @@ void MainWidget::init_workers()
 
 void MainWidget::shutdown_workers()
 {
+    // 先同步停止采集并释放设备，再退出线程，避免对象销毁时仍在读取帧。
     for (int i = 0; i < 4; ++i) {
         if (monitor_tasks_[i] && monitor_threads_[i]
                 && monitor_threads_[i]->isRunning()) {
@@ -730,6 +733,7 @@ void MainWidget::load_channel_configs()
 {
     QString errorText;
     if (!channel_config_service_.load(channel_configs_, errorText)) {
+        // 配置损坏或数据库暂时不可用时，仍允许界面使用安全默认值启动。
         channel_configs_ = ChannelConfigPolicy::defaults();
         video_windows[0]->setText(
             QStringLiteral("配置加载失败，已使用默认值：%1").arg(errorText));
@@ -865,6 +869,7 @@ void MainWidget::save_channel_configs()
         return;
     }
 
+    // 保存成功后统一重启预览，让正在运行的通道立即采用新配置。
     for (int i = 0; i < 4; ++i) {
         stop_channel(i);
     }
@@ -896,6 +901,7 @@ void MainWidget::stop_selected_preview()
 
 void MainWidget::start_configured_previews()
 {
+    // 各通道分别校验和启动；一个通道未配置不会影响其他通道。
     for (int i = 0; i < channel_configs_.size(); ++i) {
         QString errorText;
         if (ChannelConfigPolicy::validateForStart(channel_configs_.at(i),
@@ -924,6 +930,7 @@ void MainWidget::start_channel(int index)
     video_windows[index]->setText(
                 QStringLiteral("%1\n正在连接...").arg(config.name));
     MonitorTask *task = monitor_tasks_[index];
+    // 排队到对应工作线程执行，主线程只负责发起请求而不会阻塞。
     QMetaObject::invokeMethod(
         task,
         [task, config]() { task->startCapture(config); },
@@ -945,6 +952,7 @@ void MainWidget::display_frame(const cv::Mat &frame, int channelId)
         return;
     }
 
+    // OpenCV 默认是 BGR/BGRA，显示前转换成 QImage 使用的 RGB/RGBA。
     cv::Mat rgb;
     if (frame.channels() == 3) {
         cv::cvtColor(frame, rgb, cv::COLOR_BGR2RGB);
@@ -960,6 +968,7 @@ void MainWidget::display_frame(const cv::Mat &frame, int channelId)
     const QImage image(rgb.data, rgb.cols, rgb.rows,
                        static_cast<int>(rgb.step), format);
     QLabel *target = video_windows[channelId - 1];
+    // image.copy() 脱离局部 cv::Mat 的内存，避免函数返回后像素数据失效。
     target->setPixmap(QPixmap::fromImage(image.copy()).scaled(
         target->size(), Qt::KeepAspectRatio, Qt::SmoothTransformation));
 }

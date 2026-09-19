@@ -7,6 +7,7 @@ MonitorTask::MonitorTask(QObject *parent)
       capture_timer_(new QTimer(this)),
       running_(false)
 {
+    // 精确定时器按视频帧率触发读取；QTimer 会随父对象一起移动到采集线程。
     capture_timer_->setTimerType(Qt::PreciseTimer);
     connect(capture_timer_, &QTimer::timeout,
             this, &MonitorTask::captureNextFrame);
@@ -19,6 +20,7 @@ MonitorTask::~MonitorTask()
 
 void MonitorTask::startCapture(const ChannelConfig &config)
 {
+    // 重启前先释放旧数据源，防止摄像头或文件句柄泄漏。
     stopCapture();
     config_ = config;
 
@@ -41,6 +43,7 @@ void MonitorTask::startCapture(const ChannelConfig &config)
         return;
     }
 
+    // 部分摄像头或视频文件不会报告可靠帧率，此时使用 25 FPS 兜底。
     double fps = capture_.get(cv::CAP_PROP_FPS);
     if (fps < 1.0 || fps > 240.0) {
         fps = 25.0;
@@ -76,8 +79,10 @@ void MonitorTask::captureNextFrame()
     cv::Mat frame;
     if (!capture_.read(frame) || frame.empty()) {
         if (config_.sourceType == ChannelSourceType::File) {
+            // 文件播放到末尾后回到第一帧，实现持续循环预览。
             capture_.set(cv::CAP_PROP_POS_FRAMES, 0);
             if (capture_.read(frame) && !frame.empty()) {
+                // clone 创建独立数据，避免跨线程传递 OpenCV 内部复用的缓冲区。
                 emit frameReady(frame.clone(), config_.channelId);
                 return;
             }
@@ -89,5 +94,6 @@ void MonitorTask::captureNextFrame()
         return;
     }
 
+    // 队列信号稍后才会在主线程处理，因此必须发送独立帧副本。
     emit frameReady(frame.clone(), config_.channelId);
 }

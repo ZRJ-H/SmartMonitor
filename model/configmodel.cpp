@@ -8,6 +8,7 @@ bool ConfigModel::findValue(const QString &key,
                             QString &value,
                             bool &found)
 {
+    // found 区分“查询成功但没有记录”和“查询执行失败”。
     last_error_text_.clear();
     value.clear();
     found = false;
@@ -20,6 +21,7 @@ bool ConfigModel::findValue(const QString &key,
         return false;
     }
 
+    // 使用占位符绑定参数，避免手工拼接 SQL。
     QSqlQuery query(connection->database());
     query.prepare(QStringLiteral(
         "SELECT config_value FROM sys_config WHERE config_key=:key"));
@@ -46,6 +48,7 @@ bool ConfigModel::upsertValue(const QString &key, const QString &value)
         return false;
     }
 
+    // 同一个 key 已存在时直接更新，使保存操作可以重复执行。
     QSqlQuery query(connection->database());
     query.prepare(QStringLiteral(
         "INSERT INTO sys_config (config_key,config_value) "

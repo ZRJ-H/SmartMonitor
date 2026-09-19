@@ -6,6 +6,7 @@
 #include <QSqlError>
 
 namespace {
+// 每个通道使用独立 key，便于以后单独读取或更新。
 QString configKey(int channelId)
 {
     return QStringLiteral("channel.%1").arg(channelId);
@@ -16,6 +17,7 @@ bool ChannelConfigService::load(QList<ChannelConfig> &configs,
                                 QString &errorText)
 {
     errorText.clear();
+    // 数据库没有某个通道的记录时保留默认值，保证始终得到四个通道。
     configs = ChannelConfigPolicy::defaults();
 
     for (int i = 0; i < configs.size(); ++i) {
@@ -59,6 +61,7 @@ bool ChannelConfigService::save(const QList<ChannelConfig> &configs,
         return false;
     }
 
+    // 四个通道必须作为一个整体保存，任意一个失败就全部回滚。
     QSqlDatabase database = connection->database();
     if (!database.transaction()) {
         errorText = database.lastError().text();
