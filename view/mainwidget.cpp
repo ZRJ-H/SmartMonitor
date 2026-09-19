@@ -1,18 +1,30 @@
 #include "mainwidget.h"
+#include "../service/channelconfigpolicy.h"
+#include "../service/monitortask.h"
 
 #include <QButtonGroup>
+#include <QCameraDevice>
+#include <QComboBox>
 #include <QDateTime>
+#include <QFileDialog>
 #include <QFrame>
 #include <QGridLayout>
 #include <QHBoxLayout>
+#include <QImage>
 #include <QLabel>
+#include <QLineEdit>
 #include <QListWidget>
+#include <QMediaDevices>
 #include <QMessageBox>
+#include <QPixmap>
 #include <QPushButton>
 #include <QStackedWidget>
 #include <QStringList>
+#include <QThread>
 #include <QTimer>
 #include <QVBoxLayout>
+
+#include <opencv2/imgproc.hpp>
 
 MainWidget::MainWidget(QWidget *parent)
     : QWidget(parent),
@@ -23,10 +35,15 @@ MainWidget::MainWidget(QWidget *parent)
       btn_one(nullptr),
       btn_four(nullptr),
       btn_refresh_records(nullptr),
+      btn_start_preview(nullptr),
+      btn_stop_preview(nullptr),
+      btn_refresh_cameras(nullptr),
+      btn_save_channel_configs(nullptr),
       lab_login(nullptr),
       lab_time(nullptr),
       lab_video_hint(nullptr),
       page_stack(nullptr),
+      device_list(nullptr),
       video_record_list(nullptr),
       lab_video_page(nullptr),
       btn_previous_video_page(nullptr),
@@ -35,11 +52,20 @@ MainWidget::MainWidget(QWidget *parent)
       current_video_page(1),
       auth_session(),
       video_layout(nullptr),
-      m_timer(nullptr)
+      m_timer(nullptr),
+      media_devices_(new QMediaDevices(this)),
+      selected_channel_(1)
 {
-    // 数组中的控件会在 init_ui() 中创建，这里先初始化为空指针。
     for (int i = 0; i < 4; ++i) {
         video_windows[i] = nullptr;
+        channel_name_edits_[i] = nullptr;
+        channel_source_boxes_[i] = nullptr;
+        channel_camera_boxes_[i] = nullptr;
+        channel_file_edits_[i] = nullptr;
+        channel_file_buttons_[i] = nullptr;
+        monitor_threads_[i] = nullptr;
+        monitor_tasks_[i] = nullptr;
+        preview_running_[i] = false;
     }
 
     // objectName 供 QSS 的 QWidget#mainWidget 选择器使用。
@@ -53,10 +79,16 @@ MainWidget::MainWidget(QWidget *parent)
     init_style();
     init_connect();
     init_showtime();
+    init_workers();
+    load_channel_configs();
+    refresh_camera_devices();
+    apply_channel_configs_to_ui();
+    QTimer::singleShot(0, this, &MainWidget::start_configured_previews);
 }
 
 MainWidget::~MainWidget()
 {
+    shutdown_workers();
 }
 
 void MainWidget::init_ui()
@@ -157,13 +189,14 @@ void MainWidget::init_ui()
     line->setObjectName("separator");
     device_layout->addWidget(line);
 
-    QListWidget *device_list = new QListWidget;
+    device_list = new QListWidget;
     device_list->setObjectName("deviceList");
-    device_list->addItem("东门摄像头");
-    device_list->addItem("西门摄像头");
-    device_list->addItem("停车场摄像头");
-    device_list->addItem("机房摄像头");
     device_layout->addWidget(device_list);
+
+    btn_refresh_cameras = new QPushButton("刷新摄像头");
+    btn_refresh_cameras->setObjectName("refreshCamerasButton");
+    btn_refresh_cameras->setMinimumHeight(34);
+    device_layout->addWidget(btn_refresh_cameras);
     content_layout->addWidget(device_panel);
 
     QFrame *monitor_panel = new QFrame;
@@ -179,26 +212,16 @@ void MainWidget::init_ui()
     video_layout->setContentsMargins(0, 0, 0, 0);
     video_layout->setSpacing(3);
 
-    const QStringList window_names = {
-        "实时预览（访客模式）",
-        "监控窗口 2",
-        "监控窗口 3",
-        "监控窗口 4"
-    };
-
     for (int i = 0; i < 4; ++i) {
-        video_windows[i] = new QLabel(window_names.at(i));
+        video_windows[i] = new QLabel(
+                    QStringLiteral("通道 %1：等待视频源").arg(i + 1));
         video_windows[i]->setObjectName("videoWindow");
         video_windows[i]->setAlignment(Qt::AlignCenter);
         video_windows[i]->setMinimumSize(180, 150);
+        video_layout->addWidget(video_windows[i], i / 2, i % 2);
     }
 
-    // 默认使用单画面模式。
     lab_video_hint = video_windows[0];
-    video_layout->addWidget(video_windows[0], 0, 0);
-    for (int i = 1; i < 4; ++i) {
-        video_windows[i]->hide();
-    }
     monitor_layout->addWidget(video_area, 1);
 
     QHBoxLayout *control_layout = new QHBoxLayout;
@@ -207,25 +230,26 @@ void MainWidget::init_ui()
 
     btn_one = new QPushButton("单画面");
     btn_four = new QPushButton("四画面");
-    QPushButton *btn_previous = new QPushButton("上一段");
-    QPushButton *btn_play = new QPushButton("播放");
-    QPushButton *btn_next = new QPushButton("下一段");
+    btn_start_preview = new QPushButton("启动预览");
+    btn_stop_preview = new QPushButton("停止预览");
+    btn_start_preview->setObjectName("startPreviewButton");
+    btn_stop_preview->setObjectName("stopPreviewButton");
 
     const QList<QPushButton *> control_buttons = {
-        btn_one, btn_four, btn_previous, btn_play, btn_next
+        btn_one, btn_four, btn_start_preview, btn_stop_preview
     };
     for (QPushButton *button : control_buttons) {
-        button->setObjectName("controlButton");
+        if (button->objectName().isEmpty()) {
+            button->setObjectName("controlButton");
+        }
         button->setMinimumHeight(38);
     }
 
     control_layout->addWidget(btn_one);
     control_layout->addWidget(btn_four);
     control_layout->addStretch();
-    control_layout->addWidget(btn_previous);
-    control_layout->addWidget(btn_play);
-    control_layout->addWidget(btn_next);
-    control_layout->addStretch();
+    control_layout->addWidget(btn_start_preview);
+    control_layout->addWidget(btn_stop_preview);
 
     monitor_layout->addLayout(control_layout);
     content_layout->addWidget(monitor_panel, 1);
@@ -323,30 +347,68 @@ void MainWidget::init_ui()
     setting_card_layout->setSpacing(18);
 
     QLabel *setting_hint = new QLabel(
-        "当前页面用于演示 QStackedWidget 页面切换，设置项暂不保存到文件。"
+        "配置四个通道的名称和视频来源。摄像头不能被多个通道重复占用。"
     );
     setting_hint->setObjectName("settingText");
     setting_hint->setWordWrap(true);
     setting_card_layout->addWidget(setting_hint);
 
-    const QStringList setting_names = {
-        "开机自动进入监控页面",
-        "登录后显示设备列表",
-        "录像文件保存 30 天"
+    QGridLayout *config_grid = new QGridLayout;
+    config_grid->setHorizontalSpacing(12);
+    config_grid->setVerticalSpacing(10);
+    const QStringList headers = {
+        "通道", "名称", "来源", "摄像头", "本地视频", ""
     };
-    for (const QString &name : setting_names) {
-        QHBoxLayout *row = new QHBoxLayout;
-        QLabel *label = new QLabel(name);
-        label->setObjectName("settingText");
-        QPushButton *button = new QPushButton("已启用");
-        button->setObjectName("controlButton");
-        button->setCheckable(true);
-        button->setChecked(true);
-        row->addWidget(label);
-        row->addStretch();
-        row->addWidget(button);
-        setting_card_layout->addLayout(row);
+    for (int column = 0; column < headers.size(); ++column) {
+        QLabel *header = new QLabel(headers.at(column));
+        header->setObjectName("settingText");
+        config_grid->addWidget(header, 0, column);
     }
+
+    for (int i = 0; i < 4; ++i) {
+        QLabel *channel_label = new QLabel(QString::number(i + 1));
+        channel_label->setObjectName("settingText");
+
+        channel_name_edits_[i] = new QLineEdit;
+        channel_name_edits_[i]->setObjectName(
+                    QStringLiteral("channelNameEdit_%1").arg(i + 1));
+
+        channel_source_boxes_[i] = new QComboBox;
+        channel_source_boxes_[i]->setObjectName(
+                    QStringLiteral("channelSourceType_%1").arg(i + 1));
+        channel_source_boxes_[i]->addItem(
+                    "摄像头", static_cast<int>(ChannelSourceType::Camera));
+        channel_source_boxes_[i]->addItem(
+                    "本地视频", static_cast<int>(ChannelSourceType::File));
+
+        channel_camera_boxes_[i] = new QComboBox;
+        channel_camera_boxes_[i]->setObjectName(
+                    QStringLiteral("channelCamera_%1").arg(i + 1));
+
+        channel_file_edits_[i] = new QLineEdit;
+        channel_file_edits_[i]->setObjectName(
+                    QStringLiteral("channelFile_%1").arg(i + 1));
+        channel_file_edits_[i]->setPlaceholderText("选择本地视频文件");
+
+        channel_file_buttons_[i] = new QPushButton("浏览");
+        channel_file_buttons_[i]->setObjectName("controlButton");
+
+        config_grid->addWidget(channel_label, i + 1, 0);
+        config_grid->addWidget(channel_name_edits_[i], i + 1, 1);
+        config_grid->addWidget(channel_source_boxes_[i], i + 1, 2);
+        config_grid->addWidget(channel_camera_boxes_[i], i + 1, 3);
+        config_grid->addWidget(channel_file_edits_[i], i + 1, 4);
+        config_grid->addWidget(channel_file_buttons_[i], i + 1, 5);
+    }
+    config_grid->setColumnStretch(1, 1);
+    config_grid->setColumnStretch(4, 2);
+    setting_card_layout->addLayout(config_grid);
+
+    btn_save_channel_configs = new QPushButton("保存通道配置");
+    btn_save_channel_configs->setObjectName("saveChannelConfigButton");
+    btn_save_channel_configs->setMinimumHeight(40);
+    setting_card_layout->addWidget(btn_save_channel_configs,
+                                   0, Qt::AlignRight);
     setting_card_layout->addStretch();
     setting_layout->addWidget(setting_card, 1);
 
@@ -389,10 +451,12 @@ void MainWidget::init_style()
         "background-color: #353c46; border-radius: 4px; }"
         "QListWidget#deviceList::item:selected, QListWidget#recordList::item:selected { "
         "background-color: #3158a8; color: white; }"
-        "QPushButton#videoRecordRefreshButton { color: white; background-color: #3158a8; "
+        "QPushButton#videoRecordRefreshButton, QPushButton#refreshCamerasButton, "
+        "QPushButton#saveChannelConfigButton { color: white; background-color: #3158a8; "
         "border: 1px solid #4775c5; border-radius: 5px; padding: 4px 14px; "
         "font: 14px 'Microsoft YaHei'; }"
-        "QPushButton#videoRecordRefreshButton:hover { background-color: #3b6bc3; }"
+        "QPushButton#videoRecordRefreshButton:hover, QPushButton#refreshCamerasButton:hover, "
+        "QPushButton#saveChannelConfigButton:hover { background-color: #3b6bc3; }"
         "QTableView#videoRecordTable { background-color: #20252c; alternate-background-color: #292f38; "
         "color: #d7d9dc; gridline-color: #424a55; border: 1px solid #424a55; "
         "selection-background-color: #3158a8; selection-color: white; }"
@@ -404,10 +468,14 @@ void MainWidget::init_style()
         "QFrame#videoArea { background-color: #11151a; }"
         "QLabel#videoWindow, QLabel#playbackWindow { background-color: #090b0e; color: #aeb3ba; "
         "font: 20px 'Microsoft YaHei'; border: 1px solid #343b45; }"
-        "QPushButton#controlButton { color: #d5d8dd; background-color: #15191e; "
+        "QLineEdit, QComboBox { color: #e1e4e8; background-color: #15191e; "
+        "border: 1px solid #414852; border-radius: 4px; padding: 5px; }"
+        "QPushButton#controlButton, QPushButton#startPreviewButton, "
+        "QPushButton#stopPreviewButton { color: #d5d8dd; background-color: #15191e; "
         "border: 1px solid #414852; border-radius: 5px; padding: 5px 16px; "
         "font: 14px 'Microsoft YaHei'; }"
-        "QPushButton#controlButton:hover { color: white; background-color: #344052; }"
+        "QPushButton#controlButton:hover, QPushButton#startPreviewButton:hover, "
+        "QPushButton#stopPreviewButton:hover { color: white; background-color: #344052; }"
         "QPushButton#controlButton:checked { color: white; background-color: #3158a8; }"
     );
 }
@@ -436,6 +504,29 @@ void MainWidget::init_connect()
             this, SLOT(load_previous_video_page()));
     connect(btn_next_video_page, SIGNAL(clicked()),
             this, SLOT(load_next_video_page()));
+
+    connect(device_list, &QListWidget::itemClicked,
+            this, &MainWidget::select_channel);
+    connect(btn_start_preview, &QPushButton::clicked,
+            this, &MainWidget::start_selected_preview);
+    connect(btn_stop_preview, &QPushButton::clicked,
+            this, &MainWidget::stop_selected_preview);
+    connect(btn_refresh_cameras, &QPushButton::clicked,
+            this, &MainWidget::refresh_camera_devices);
+    connect(media_devices_, &QMediaDevices::videoInputsChanged,
+            this, &MainWidget::refresh_camera_devices);
+    connect(btn_save_channel_configs, &QPushButton::clicked,
+            this, &MainWidget::save_channel_configs);
+
+    for (int i = 0; i < 4; ++i) {
+        connect(channel_source_boxes_[i],
+                qOverload<int>(&QComboBox::currentIndexChanged),
+                this,
+                [this, i](int) { update_source_controls(i); });
+        connect(channel_file_buttons_[i], &QPushButton::clicked,
+                this,
+                [this, i]() { choose_channel_file(i); });
+    }
 }
 
 void MainWidget::init_showtime()
@@ -488,7 +579,6 @@ void MainWidget::setLoggedInUser(const QString &userName)
     auth_session.login(userName);
     lab_login->setText(userName);
     btn_login->setText("退出");
-    lab_video_hint->setText("登录成功，请从左侧选择设备开始预览");
 
     // 登录通过后从第一页加载视频文件。
     current_video_page = 1;
@@ -552,7 +642,6 @@ void MainWidget::logout()
     lab_video_page->setText("第 1 / 1 页，共 0 条");
     lab_login->setText("未登录");
     btn_login->setText("登录");
-    lab_video_hint->setText("实时预览（访客模式）");
     btn_monitor_page->setChecked(true);
     page_stack->setCurrentIndex(0);
     QMessageBox::information(this, "退出登录", "已退出，当前为访客模式。");
@@ -577,14 +666,14 @@ void MainWidget::update_time()
 
 void MainWidget::show_single_window()
 {
-    // removeWidget() 只从布局中移除控件，不会删除控件对象。
     for (int i = 0; i < 4; ++i) {
         video_layout->removeWidget(video_windows[i]);
         video_windows[i]->hide();
     }
 
-    video_layout->addWidget(video_windows[0], 0, 0);
-    video_windows[0]->show();
+    const int index = selected_channel_ - 1;
+    video_layout->addWidget(video_windows[index], 0, 0);
+    video_windows[index]->show();
 }
 
 void MainWidget::show_multi_window()
@@ -595,4 +684,308 @@ void MainWidget::show_multi_window()
         video_layout->addWidget(video_windows[i], i / 2, i % 2);
         video_windows[i]->show();
     }
+}
+
+void MainWidget::init_workers()
+{
+    qRegisterMetaType<cv::Mat>("cv::Mat");
+    for (int i = 0; i < 4; ++i) {
+        monitor_threads_[i] = new QThread(this);
+        monitor_tasks_[i] = new MonitorTask;
+        monitor_tasks_[i]->moveToThread(monitor_threads_[i]);
+
+        connect(monitor_threads_[i], &QThread::finished,
+                monitor_tasks_[i], &QObject::deleteLater);
+        connect(monitor_tasks_[i], &MonitorTask::frameReady,
+                this, &MainWidget::display_frame, Qt::QueuedConnection);
+        connect(monitor_tasks_[i], &MonitorTask::captureStateChanged,
+                this, &MainWidget::on_capture_state_changed,
+                Qt::QueuedConnection);
+        connect(monitor_tasks_[i], &MonitorTask::errorOccurred,
+                this, &MainWidget::show_capture_error,
+                Qt::QueuedConnection);
+
+        monitor_threads_[i]->start();
+    }
+}
+
+void MainWidget::shutdown_workers()
+{
+    for (int i = 0; i < 4; ++i) {
+        if (monitor_tasks_[i] && monitor_threads_[i]
+                && monitor_threads_[i]->isRunning()) {
+            QMetaObject::invokeMethod(monitor_tasks_[i], "stopCapture",
+                                      Qt::BlockingQueuedConnection);
+        }
+    }
+    for (int i = 0; i < 4; ++i) {
+        if (monitor_threads_[i] && monitor_threads_[i]->isRunning()) {
+            monitor_threads_[i]->quit();
+            monitor_threads_[i]->wait();
+        }
+    }
+}
+
+void MainWidget::load_channel_configs()
+{
+    QString errorText;
+    if (!channel_config_service_.load(channel_configs_, errorText)) {
+        channel_configs_ = ChannelConfigPolicy::defaults();
+        video_windows[0]->setText(
+            QStringLiteral("配置加载失败，已使用默认值：%1").arg(errorText));
+    }
+}
+
+void MainWidget::apply_channel_configs_to_ui()
+{
+    for (int i = 0; i < 4; ++i) {
+        const ChannelConfig &config = channel_configs_.at(i);
+        channel_name_edits_[i]->setText(config.name);
+        channel_source_boxes_[i]->setCurrentIndex(
+                    config.sourceType == ChannelSourceType::Camera ? 0 : 1);
+
+        int cameraRow = channel_camera_boxes_[i]->findData(config.cameraIndex);
+        if (cameraRow < 0) {
+            channel_camera_boxes_[i]->addItem(
+                QStringLiteral("摄像头 %1（当前不可用）")
+                    .arg(config.cameraIndex),
+                config.cameraIndex);
+            cameraRow = channel_camera_boxes_[i]->count() - 1;
+        }
+        channel_camera_boxes_[i]->setCurrentIndex(cameraRow);
+        channel_file_edits_[i]->setText(config.filePath);
+        update_source_controls(i);
+    }
+    refresh_channel_list();
+}
+
+QList<ChannelConfig> MainWidget::collect_channel_configs_from_ui() const
+{
+    QList<ChannelConfig> configs;
+    for (int i = 0; i < 4; ++i) {
+        ChannelConfig config;
+        config.channelId = i + 1;
+        config.name = channel_name_edits_[i]->text().trimmed();
+        config.sourceType = static_cast<ChannelSourceType>(
+                    channel_source_boxes_[i]->currentData().toInt());
+        config.cameraIndex = channel_camera_boxes_[i]->currentData().toInt();
+        config.filePath = channel_file_edits_[i]->text().trimmed();
+        configs.append(config);
+    }
+    return configs;
+}
+
+void MainWidget::refresh_channel_list()
+{
+    const int previousRow = device_list->currentRow();
+    device_list->clear();
+    for (int i = 0; i < channel_configs_.size(); ++i) {
+        const ChannelConfig &config = channel_configs_.at(i);
+        const QString source = config.sourceType == ChannelSourceType::Camera
+                ? QStringLiteral("摄像头 %1").arg(config.cameraIndex)
+                : (config.filePath.isEmpty()
+                   ? QStringLiteral("未选择视频")
+                   : QStringLiteral("本地视频"));
+        const QString state = preview_running_[i]
+                ? QStringLiteral(" · 运行中")
+                : QString();
+        device_list->addItem(
+            QStringLiteral("%1 · %2%3").arg(config.name, source, state));
+    }
+    const int row = previousRow >= 0 ? previousRow : selected_channel_ - 1;
+    device_list->setCurrentRow(qBound(0, row, 3));
+}
+
+void MainWidget::update_source_controls(int index)
+{
+    if (index < 0 || index >= 4) {
+        return;
+    }
+    const bool cameraSelected =
+            channel_source_boxes_[index]->currentData().toInt()
+            == static_cast<int>(ChannelSourceType::Camera);
+    channel_camera_boxes_[index]->setEnabled(cameraSelected);
+    channel_file_edits_[index]->setEnabled(!cameraSelected);
+    channel_file_buttons_[index]->setEnabled(!cameraSelected);
+}
+
+void MainWidget::choose_channel_file(int index)
+{
+    if (index < 0 || index >= 4) {
+        return;
+    }
+    const QString path = QFileDialog::getOpenFileName(
+        this,
+        QStringLiteral("为通道 %1 选择视频文件").arg(index + 1),
+        channel_file_edits_[index]->text(),
+        QStringLiteral("视频文件 (*.mp4 *.avi *.mkv *.mov);;所有文件 (*.*)"));
+    if (!path.isEmpty()) {
+        channel_file_edits_[index]->setText(path);
+    }
+}
+
+void MainWidget::refresh_camera_devices()
+{
+    const QList<QCameraDevice> cameras = QMediaDevices::videoInputs();
+    for (int i = 0; i < 4; ++i) {
+        const int previousIndex = channel_camera_boxes_[i]->currentData().toInt();
+        channel_camera_boxes_[i]->clear();
+        for (int cameraIndex = 0; cameraIndex < cameras.size(); ++cameraIndex) {
+            channel_camera_boxes_[i]->addItem(
+                QStringLiteral("%1（索引 %2）")
+                    .arg(cameras.at(cameraIndex).description())
+                    .arg(cameraIndex),
+                cameraIndex);
+        }
+        if (cameras.isEmpty()) {
+            channel_camera_boxes_[i]->addItem(
+                        QStringLiteral("未检测到摄像头"), -1);
+        }
+        const int restoredRow = channel_camera_boxes_[i]->findData(previousIndex);
+        if (restoredRow >= 0) {
+            channel_camera_boxes_[i]->setCurrentIndex(restoredRow);
+        }
+    }
+}
+
+void MainWidget::save_channel_configs()
+{
+    if (!require_permission(AuthPermission::Settings, "保存通道配置")) {
+        return;
+    }
+
+    const QList<ChannelConfig> configs = collect_channel_configs_from_ui();
+    QString errorText;
+    if (!ChannelConfigPolicy::validateAssignments(configs, errorText)) {
+        QMessageBox::warning(this, "配置无效", errorText);
+        return;
+    }
+    if (!channel_config_service_.save(configs, errorText)) {
+        QMessageBox::warning(this, "保存失败", errorText);
+        return;
+    }
+
+    for (int i = 0; i < 4; ++i) {
+        stop_channel(i);
+    }
+    channel_configs_ = configs;
+    refresh_channel_list();
+    start_configured_previews();
+    QMessageBox::information(this, "保存成功", "四通道名称和来源已保存并应用。");
+}
+
+void MainWidget::select_channel(QListWidgetItem *item)
+{
+    const int row = device_list->row(item);
+    if (row < 0 || row >= 4) {
+        return;
+    }
+    selected_channel_ = row + 1;
+    lab_video_hint = video_windows[row];
+}
+
+void MainWidget::start_selected_preview()
+{
+    start_channel(selected_channel_ - 1);
+}
+
+void MainWidget::stop_selected_preview()
+{
+    stop_channel(selected_channel_ - 1);
+}
+
+void MainWidget::start_configured_previews()
+{
+    for (int i = 0; i < channel_configs_.size(); ++i) {
+        QString errorText;
+        if (ChannelConfigPolicy::validateForStart(channel_configs_.at(i),
+                                                  errorText)) {
+            start_channel(i);
+        } else {
+            video_windows[i]->setText(
+                QStringLiteral("%1\n%2")
+                    .arg(channel_configs_.at(i).name, errorText));
+        }
+    }
+}
+
+void MainWidget::start_channel(int index)
+{
+    if (index < 0 || index >= channel_configs_.size()) {
+        return;
+    }
+    QString errorText;
+    const ChannelConfig config = channel_configs_.at(index);
+    if (!ChannelConfigPolicy::validateForStart(config, errorText)) {
+        QMessageBox::information(this, "无法启动预览", errorText);
+        return;
+    }
+
+    video_windows[index]->setText(
+                QStringLiteral("%1\n正在连接...").arg(config.name));
+    MonitorTask *task = monitor_tasks_[index];
+    QMetaObject::invokeMethod(
+        task,
+        [task, config]() { task->startCapture(config); },
+        Qt::QueuedConnection);
+}
+
+void MainWidget::stop_channel(int index)
+{
+    if (index < 0 || index >= 4 || monitor_tasks_[index] == nullptr) {
+        return;
+    }
+    QMetaObject::invokeMethod(monitor_tasks_[index], "stopCapture",
+                              Qt::QueuedConnection);
+}
+
+void MainWidget::display_frame(const cv::Mat &frame, int channelId)
+{
+    if (channelId < 1 || channelId > 4 || frame.empty()) {
+        return;
+    }
+
+    cv::Mat rgb;
+    if (frame.channels() == 3) {
+        cv::cvtColor(frame, rgb, cv::COLOR_BGR2RGB);
+    } else if (frame.channels() == 4) {
+        cv::cvtColor(frame, rgb, cv::COLOR_BGRA2RGBA);
+    } else {
+        cv::cvtColor(frame, rgb, cv::COLOR_GRAY2RGB);
+    }
+
+    const QImage::Format format = rgb.channels() == 4
+            ? QImage::Format_RGBA8888
+            : QImage::Format_RGB888;
+    const QImage image(rgb.data, rgb.cols, rgb.rows,
+                       static_cast<int>(rgb.step), format);
+    QLabel *target = video_windows[channelId - 1];
+    target->setPixmap(QPixmap::fromImage(image.copy()).scaled(
+        target->size(), Qt::KeepAspectRatio, Qt::SmoothTransformation));
+}
+
+void MainWidget::show_capture_error(int channelId, const QString &message)
+{
+    if (channelId < 1 || channelId > 4) {
+        return;
+    }
+    preview_running_[channelId - 1] = false;
+    video_windows[channelId - 1]->setText(
+        QStringLiteral("%1\n%2")
+            .arg(channel_configs_.at(channelId - 1).name, message));
+    refresh_channel_list();
+}
+
+void MainWidget::on_capture_state_changed(int channelId, bool running)
+{
+    if (channelId < 1 || channelId > 4) {
+        return;
+    }
+    preview_running_[channelId - 1] = running;
+    if (!running) {
+        video_windows[channelId - 1]->setText(
+            QStringLiteral("%1\n预览已停止")
+                .arg(channel_configs_.at(channelId - 1).name));
+    }
+    refresh_channel_list();
 }
