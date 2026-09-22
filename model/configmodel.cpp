@@ -1,3 +1,4 @@
+// 实现 sys_config 表的参数化查询和“存在则更新、不存在则插入”写入逻辑。
 #include "configmodel.h"
 #include "../util/dbconn.h"
 
@@ -8,7 +9,7 @@ bool ConfigModel::findValue(const QString &key,
                             QString &value,
                             bool &found)
 {
-    // found 区分“查询成功但没有记录”和“查询执行失败”。
+    // 先用返回值区分查询成功/失败；仅查询成功时，found 才表示是否找到记录。
     last_error_text_.clear();
     value.clear();
     found = false;

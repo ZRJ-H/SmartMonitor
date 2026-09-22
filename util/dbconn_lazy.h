@@ -1,3 +1,4 @@
+// 提供另一种“连接与 QSqlQuery 一并持有”的懒汉单例教学示例，当前业务代码未使用。
 #ifndef DBCONN_LAZY_H
 #define DBCONN_LAZY_H
 
@@ -6,7 +7,7 @@
 #include <QString>
 
 // 懒汉式数据库连接单例演示。
-// 与现有 DbConn 饿汉式不同：这里只把 instance 初始化为 nullptr，
+// 与现有 DbConn 一样采用懒加载；区别是本类还长期持有一个 QSqlQuery，
 // 第一次调用 getInstance() 时才真正执行 new DbConnLazy。
 //
 // 调用示例（本文件只是 Demo，现有工程暂未切换）：
@@ -41,7 +42,9 @@ public:
     // 返回单例内部维护的查询对象。
     QSqlQuery &getQuery();
 
+    // 返回底层数据库是否已经成功打开。
     bool isOpen() const;
+    // 返回最近一次数据库连接错误。
     QString lastErrorText() const;
 
     // 释放查询对象和数据库连接，并把 instance 恢复为 nullptr。
@@ -52,7 +55,9 @@ public:
     DbConnLazy &operator=(const DbConnLazy &) = delete;
 
 private:
+    // 构造时创建 MySQL 连接和绑定到该连接的查询对象。
     DbConnLazy();
+    // 先销毁查询引用，再关闭并移除数据库连接。
     ~DbConnLazy();
 
     // 懒汉式核心：类外只初始化为 nullptr，不在程序启动时创建对象。

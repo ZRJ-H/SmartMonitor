@@ -1,3 +1,4 @@
+// 主窗口界面测试：验证启动后的四画面布局及通道控制、四行配置控件是否齐全。
 #include <QtTest>
 
 #include "../view/mainwidget.h"
@@ -12,7 +13,9 @@ class Day3MainWidgetTests : public QObject
     Q_OBJECT
 
 private slots:
+    // 验证监控页初始显示四个可见视频窗口。
     void monitorPageStartsWithFourVisibleChannels();
+    // 验证通道操作按钮和四组配置输入控件均已创建。
     void channelControlsAndFourConfigRowsArePresent();
 };
 

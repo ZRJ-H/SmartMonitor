@@ -1,3 +1,4 @@
+// 声明一个最小的 Qt 信号槽教学窗口，用于演示按钮点击与自定义关闭槽的连接。
 #ifndef MYWIDGET_H
 #define MYWIDGET_H
 
@@ -10,6 +11,7 @@ class MyWidget : public QWidget
     Q_OBJECT
 
 public:
+    // 创建按钮和布局，并建立系统信号到 myClose() 的连接。
     explicit MyWidget(QWidget *parent = nullptr);
 
 public slots:

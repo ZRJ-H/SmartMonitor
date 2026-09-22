@@ -1,3 +1,4 @@
+// 实现用户凭据查询与最后登录时间更新，SQL 参数均通过绑定变量传入。
 #include "usermodel.h"
 #include "../util/dbconn.h"
 

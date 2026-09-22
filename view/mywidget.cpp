@@ -1,3 +1,4 @@
+// 实现信号槽教学窗口：按钮触发确认对话框，用户确认后关闭窗口。
 #include "mywidget.h"
 
 #include <QDebug>

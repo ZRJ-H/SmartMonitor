@@ -1,3 +1,4 @@
+// 实现登录用例的完整决策顺序：格式校验、锁定检查、凭据查询、失败计数和成功收尾。
 #include "userservice.h"
 
 #include <QCryptographicHash>

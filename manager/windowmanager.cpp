@@ -1,3 +1,4 @@
+// 实现主窗口与登录窗口的生命周期管理，以及登录信号到界面切换流程的衔接。
 #include "windowmanager.h"
 #include "../view/loginwidget.h"
 #include "../view/mainwidget.h"
@@ -26,6 +27,7 @@ WindowManager::WindowManager(QObject *parent)
       main_widget(new MainWidget),
       login_widget(new LoginWidget)
 {
+    // 窗口只通过信号交流，避免 MainWidget 与 LoginWidget 互相持有指针。
     connect(main_widget, &MainWidget::login_requested,
             this, &WindowManager::showLoginWindow);
     connect(login_widget, &LoginWidget::login_success,

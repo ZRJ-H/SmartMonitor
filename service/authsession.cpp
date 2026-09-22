@@ -1,3 +1,4 @@
+// 实现主窗口内存会话的登录、退出和权限判断。
 #include "authsession.h"
 
 AuthSession::AuthSession()

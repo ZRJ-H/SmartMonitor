@@ -1,3 +1,5 @@
+// 历史录像核心测试：描述 Video 元数据和十秒录制分段的预期行为。
+// 注意：该文件引用的 video.h 与 recordingsegment.h 当前不在本项目源码目录中。
 #include <QtTest>
 
 #include "../model/video.h"
@@ -8,9 +10,13 @@ class Day20CoreTests : public QObject
     Q_OBJECT
 
 private slots:
+    // 验证 Video 对象完整保留构造时传入的录像元数据。
     void videoPreservesMetadata();
+    // 验证分段文件名同时包含开始时间和通道编号。
     void segmentNameContainsTimeAndChannel();
+    // 验证录制分段达到十秒后触发滚动。
     void segmentRollsAtTenSeconds();
+    // 验证结束分段时生成可持久化的 Video 对象。
     void segmentFinishBuildsVideo();
 };
 

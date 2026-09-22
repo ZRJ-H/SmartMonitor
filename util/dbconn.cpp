@@ -1,3 +1,4 @@
+// 实现 MySQL 连接的懒加载、状态查询和安全释放流程。
 #include "dbconn.h"
 
 // 懒汉式：只初始化空指针，首次访问时才连接数据库。
@@ -31,7 +32,7 @@ DbConn::~DbConn()
         db.close();
     }
 
-    // 解除db成员对连接的引用
+    // removeDatabase 前必须解除成员对连接的引用，否则 Qt 会警告连接仍在使用。
     db = QSqlDatabase();
 
     // 从Qt数据库连接管理器中删除

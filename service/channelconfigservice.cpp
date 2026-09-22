@@ -1,3 +1,4 @@
+// 实现通道配置的默认值合并、JSON 转换及数据库事务读写流程。
 #include "channelconfigservice.h"
 #include "channelconfigpolicy.h"
 #include "../util/dbconn.h"

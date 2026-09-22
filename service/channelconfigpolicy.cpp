@@ -1,3 +1,4 @@
+// 实现通道默认值、重复资源检测、启动前校验及 JSON 编解码规则。
 #include "channelconfigpolicy.h"
 
 #include <QJsonDocument>

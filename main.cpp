@@ -1,3 +1,4 @@
+// 程序入口：创建 Qt 应用，启动窗口管理器，并在事件循环结束后依次释放界面与数据库资源。
 #include "manager/windowmanager.h"
 #include "util/dbconn.h"
 

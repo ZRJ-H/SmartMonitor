@@ -2,7 +2,7 @@
 # Day15 MVC 登录与视频分页案例
 #-------------------------------------------------
 
-QT += core gui widgets multimedia sql
+QT += core gui widgets multimedia multimediawidgets sql
 
 TARGET = day20_smart_monitor
 TEMPLATE = app
@@ -17,38 +17,50 @@ SOURCES += \
     main.cpp \
     manager/windowmanager.cpp \
     model/channelconfig.cpp \
+    model/video.cpp \
     model/configmodel.cpp \
     model/usermodel.cpp \
     model/videomodel.cpp \
     service/authpolicy.cpp \
     service/authsession.cpp \
+    service/capturecadence.cpp \
+    service/frameratelimiter.cpp \
     service/channelconfigpolicy.cpp \
     service/channelconfigservice.cpp \
     service/monitortask.cpp \
+    service/recordingsegment.cpp \
+    service/recordtask.cpp \
     service/userservice.cpp \
     service/videoservice.cpp \
     util/dbconn.cpp \
     util/verifycodelabel.cpp \
     view/loginwidget.cpp \
+    view/videolabel.cpp \
     view/mainwidget.cpp \
     view/mywidget.cpp
 
 HEADERS += \
     manager/windowmanager.h \
     model/channelconfig.h \
+    model/video.h \
     model/configmodel.h \
     model/usermodel.h \
     model/videomodel.h \
     service/authpolicy.h \
     service/authsession.h \
+    service/capturecadence.h \
+    service/frameratelimiter.h \
     service/channelconfigpolicy.h \
     service/channelconfigservice.h \
     service/monitortask.h \
+    service/recordingsegment.h \
+    service/recordtask.h \
     service/userservice.h \
     service/videoservice.h \
     util/dbconn.h \
     util/verifycodelabel.h \
     view/loginwidget.h \
+    view/videolabel.h \
     view/mainwidget.h \
     view/mywidget.h
 
@@ -60,7 +72,9 @@ DESTDIR = $$PWD/bin
 
 win32 {
     OPENCV_RUNTIME_DLL = E:/opencv/install/x64/mingw/bin/libopencv_world4140.dll
+    OPENCV_VIDEOIO_FFMPEG_DLL = E:/opencv/install/x64/mingw/bin/opencv_videoio_ffmpeg4140_64.dll
     QMAKE_POST_LINK += $$QMAKE_COPY $$shell_path($$OPENCV_RUNTIME_DLL) $$shell_path($$DESTDIR)
+    QMAKE_POST_LINK += $$escape_expand(\n\t) $$QMAKE_COPY $$shell_path($$OPENCV_VIDEOIO_FFMPEG_DLL) $$shell_path($$DESTDIR)
 }
 
 RESOURCES += resources.qrc

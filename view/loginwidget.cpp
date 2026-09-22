@@ -1,3 +1,4 @@
+// 实现登录表单布局、输入检查、验证码校验和 LoginResult 到用户提示的映射。
 #include "loginwidget.h"
 #include "..\util\verifycodelabel.h"
 

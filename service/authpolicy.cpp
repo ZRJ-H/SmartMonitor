@@ -1,3 +1,4 @@
+// 实现登录格式校验与基于当前时间的失败计数、到期解锁逻辑。
 #include "authpolicy.h"
 
 #include <QRegularExpression>
@@ -36,6 +37,7 @@ bool LoginThrottle::isLocked(const QString &userName,
 
     const qint64 seconds = now.secsTo(it->lockedUntil);
     if (seconds <= 0) {
+        // 锁定到期即移除旧状态，使下一次失败从零重新累计。
         attempts.erase(it);
         return false;
     }

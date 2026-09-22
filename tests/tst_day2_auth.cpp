@@ -1,3 +1,4 @@
+// 认证策略单元测试：覆盖账号/密码边界、三次失败锁定、成功后清零和访客权限。
 #include <QtTest>
 
 #include "../service/authpolicy.h"
@@ -8,9 +9,13 @@ class Day2AuthTests : public QObject
     Q_OBJECT
 
 private slots:
+    // 验证用户名与密码长度、字符范围的边界条件。
     void validatesAccountAndPasswordBoundaries();
+    // 验证第三次失败触发十分钟锁定，并在到期后自动解除。
     void locksAfterThirdFailureAndUnlocksAfterTenMinutes();
+    // 验证成功登录会清除该账号之前累计的失败次数。
     void successfulLoginClearsFailures();
+    // 验证访客只能访问实时预览，回放和设置需要登录。
     void guestCanOnlyAccessLivePreview();
 };
 

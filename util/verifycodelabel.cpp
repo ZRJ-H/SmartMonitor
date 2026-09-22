@@ -1,3 +1,4 @@
+// 实现验证码字符随机生成、抗干扰绘制以及鼠标点击刷新。
 #include "verifycodelabel.h"
 
 #include <QColor>

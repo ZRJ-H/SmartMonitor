@@ -1,3 +1,4 @@
+// 通道配置单元测试：覆盖默认四通道、资源冲突、启动校验、JSON 和数据库往返。
 #include <QtTest>
 
 #include "../model/channelconfig.h"
@@ -10,10 +11,15 @@ class Day3ChannelConfigTests : public QObject
     Q_OBJECT
 
 private slots:
+    // 验证默认配置的通道数量、编号和名称符合界面约定。
     void defaultsMatchDay3Plan();
+    // 验证同一摄像头不能同时分配给多个通道。
     void duplicateCameraAssignmentIsRejected();
+    // 验证未选择文件的文件源不能启动采集。
     void emptyFileSourceIsRejectedWhenStarting();
+    // 验证单个通道配置经 JSON 编解码后字段保持一致。
     void channelConfigRoundTripsThroughJson();
+    // 验证四路配置写入并重新读取数据库后保持一致。
     void channelConfigsRoundTripThroughDatabase();
 };
 

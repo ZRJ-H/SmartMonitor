@@ -1,3 +1,4 @@
+// 实现教学用 DbConnLazy 单例，演示 QSqlQuery 与数据库连接的构造、复用和销毁顺序。
 #include "dbconn_lazy.h"
 
 #include <QDebug>
