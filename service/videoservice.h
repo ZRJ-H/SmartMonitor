@@ -26,13 +26,15 @@ struct VideoPage
 class VideoService
 {
 public:
+    VideoService(const QSqlDatabase &database, int pageSize = 5);
+    bool findById(qint64 id, VideoRecord &record, QString &errorText);
     explicit VideoService(int pageSize = 5); // pageSize 小于 1 时按 1 处理。
 
     // 加载请求页；成功写入 page，失败写入 errorText 并返回 false。
     bool loadPage(int requestedPage, VideoPage &page, QString &errorText);
     bool loadPage(const VideoQuery &query, int requestedPage,
                   VideoPage &page, QString &errorText);
-    bool saveVideo(const Video &video, QString &errorText);
+    bool saveVideo(const Video &video, QString &errorText, int *insertedId = nullptr);
     bool saveEvent(const QString &eventKey, int channelId,
                    const QDateTime &eventTime, const QString &videoPath,
                    double confidence, QString &errorText);

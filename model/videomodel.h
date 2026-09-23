@@ -3,6 +3,7 @@
 #define VIDEOMODEL_H
 
 #include <QString>
+#include <QSqlDatabase>
 #include <QStringList>
 #include <QDateTime>
 #include <QList>
@@ -13,6 +14,7 @@ struct VideoQuery
     QDateTime startTime;
     QDateTime endTime;
     int channelId = 0;
+    int eventType = -1; // -1 全部，0 普通，1 事件
 };
 
 struct VideoRecord
@@ -31,6 +33,9 @@ class VideoModel
 {
 public:
     VideoModel();
+    explicit VideoModel(const QSqlDatabase &database);
+    bool findById(qint64 id, VideoRecord &record);
+    bool findByPath(const QString &path, VideoRecord &record);
 
     // 统计录像记录总数；失败返回 -1，并可通过 lastErrorText() 获取原因。
     int countVideos();
@@ -47,6 +52,9 @@ public:
     QString lastErrorText() const;
 
 private:
+    QSqlDatabase database() const;
+    QSqlDatabase injectedDatabase;
+    bool injected = false;
     QString last_error_text; // 保存最近一次统计或分页查询失败的原因。
 };
 

@@ -51,10 +51,12 @@ bool ConfigModel::upsertValue(const QString &key, const QString &value)
 
     // 同一个 key 已存在时直接更新，使保存操作可以重复执行。
     QSqlQuery query(connection->database());
-    query.prepare(QStringLiteral(
-        "INSERT INTO sys_config (config_key,config_value) "
-        "VALUES (:key,:value) "
-        "ON DUPLICATE KEY UPDATE config_value=VALUES(config_value)"));
+    const bool sqlite = connection->database().driverName() == "QSQLITE";
+    query.prepare(sqlite
+        ? QStringLiteral("INSERT INTO sys_config(config_key,config_value) VALUES(:key,:value) "
+                         "ON CONFLICT(config_key) DO UPDATE SET config_value=excluded.config_value")
+        : QStringLiteral("INSERT INTO sys_config(config_key,config_value) VALUES(:key,:value) "
+                         "ON DUPLICATE KEY UPDATE config_value=VALUES(config_value)"));
     query.bindValue(QStringLiteral(":key"), key);
     query.bindValue(QStringLiteral(":value"), value);
     if (!query.exec()) {

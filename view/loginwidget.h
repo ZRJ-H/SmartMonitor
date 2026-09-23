@@ -24,7 +24,7 @@ public:
 signals:
     // 自定义信号只声明，不手写定义；moc 会生成信号实现。
     // 信号表示“事情已经发生”，而不直接操作 MainWidget，从而降低耦合。
-    void login_success(const QString &userName); // 验证成功，携带已登录用户名。
+    void login_success(int userId, const QString &userName); // 验证成功，携带已登录用户名。
     void login_cancelled(); // 用户取消或关闭登录窗口，不改变主窗口会话。
 
 public slots:

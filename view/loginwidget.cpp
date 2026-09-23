@@ -260,7 +260,7 @@ void LoginWidget::login()
     }
 
     QMessageBox::information(this, "登录成功", "验证通过，正在返回主界面。");
-    emit login_success(result.userName);
+    emit login_success(result.userId, result.userName);
 
     // 清理敏感信息并刷新验证码，为下一次打开登录窗口做准备。
     edit_pwd->clear();

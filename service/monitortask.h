@@ -31,6 +31,7 @@ public slots:
     void startCapture(const ChannelConfig &config);
     // 停止定时器并释放当前 OpenCV 数据源；可重复调用。
     void stopCapture();
+    void configureCaptureInterval(int milliseconds);
     void configureDetection(bool enabled, const QString &modelPath,
                             double confidence);
 
@@ -67,6 +68,7 @@ private:
     qint64 last_event_ms_;
     QElapsedTimer last_person_seen_;
     QElapsedTimer detection_clock_;
+    int capture_interval_ms_ = 40;
     CaptureCadence capture_cadence_;
     FrameRateLimiter output_limiter_;
     QElapsedTimer output_clock_;

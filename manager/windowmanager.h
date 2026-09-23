@@ -29,7 +29,7 @@ private slots:
     // 响应主窗口的登录请求：隐藏主窗口并显示登录窗口。
     void showLoginWindow();
     // 登录成功后记录用户名、关闭登录窗口并恢复主窗口。
-    void onLoginSuccess(const QString &userName);
+    void onLoginSuccess(int userId, const QString &userName);
     // 用户取消登录时关闭登录窗口并恢复主窗口。
     void onLoginCancelled();
 

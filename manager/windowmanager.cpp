@@ -59,10 +59,10 @@ void WindowManager::showLoginWindow()
     login_widget->activateWindow();
 }
 
-void WindowManager::onLoginSuccess(const QString &userName)
+void WindowManager::onLoginSuccess(int userId, const QString &userName)
 {
     login_widget->hide();
-    main_widget->setLoggedInUser(userName);
+    main_widget->setLoggedInUser(userId, userName);
     showMainWindow();
 }
 

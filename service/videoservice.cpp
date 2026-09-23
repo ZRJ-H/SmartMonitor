@@ -8,6 +8,13 @@ VideoService::VideoService(int pageSize)
 {
 }
 
+VideoService::VideoService(const QSqlDatabase &db,int pageSize)
+    : video_model(db),page_size(qMax(1,pageSize)) {}
+bool VideoService::findById(qint64 id,VideoRecord &record,QString &errorText) {
+    errorText.clear();
+    if(video_model.findById(id,record)) return true;
+    errorText=video_model.lastErrorText();return false;
+}
 bool VideoService::loadPage(int requestedPage,
                             VideoPage &page,
                             QString &errorText)
@@ -20,6 +27,10 @@ bool VideoService::loadPage(const VideoQuery &filter, int requestedPage,
 {
     errorText.clear();
 
+    if ((filter.startTime.isValid() && filter.endTime.isValid() && filter.startTime > filter.endTime)
+        || filter.channelId < 0 || filter.channelId > 4 || filter.eventType < -1 || filter.eventType > 1) {
+        errorText = QStringLiteral("查询条件无效"); return false;
+    }
     const int total_records = video_model.countVideos(filter);
     if (total_records < 0) {
         errorText = video_model.lastErrorText();
@@ -45,14 +56,14 @@ bool VideoService::loadPage(const VideoQuery &filter, int requestedPage,
     return true;
 }
 
-bool VideoService::saveVideo(const Video &video, QString &errorText)
+bool VideoService::saveVideo(const Video &video, QString &errorText, int *insertedId)
 {
     errorText.clear();
     if (video.getVideoPath().isEmpty() || video.getFileSize() <= 0) {
         errorText = QStringLiteral("录像文件信息无效");
         return false;
     }
-    if (!video_model.insertVideo(video)) {
+    if (!video_model.insertVideo(video, insertedId)) {
         errorText = video_model.lastErrorText();
         return false;
     }

@@ -58,8 +58,11 @@ bool RecordTask::openWriter(const cv::Mat &frame)
     int height = qMax(2, static_cast<int>(frame.rows * scale)) & ~1;
     output_size_ = cv::Size(width, height);
     const int codec = cv::VideoWriter::fourcc('m', 'p', '4', 'v');
-    if (!writer_.open(segment_.filePath().toStdString(), codec, fps_,
-                      output_size_, frame.channels() != 1)) {
+    bool opened = writer_.open(segment_.filePath().toStdString(), cv::VideoWriter::fourcc('a','v','c','1'),
+                                fps_, output_size_, frame.channels() != 1);
+    if(!opened) opened = writer_.open(segment_.filePath().toStdString(), codec, fps_,
+                                      output_size_, frame.channels() != 1);
+    if (!opened) {
         emit recordError(channel_id_,
             QStringLiteral("无法创建录像文件：%1").arg(segment_.filePath()));
         segment_.finish(QDateTime::currentDateTime(), 0);
@@ -80,6 +83,14 @@ void RecordTask::saveFrame(const cv::Mat &frame, int channelId)
         enabled_ = false;
         return;
     }
+    if(event_.takeSample(elapsed_.elapsed())){
+        cv::Mat rgb;
+        if(frame.channels()==1)cv::cvtColor(frame,rgb,cv::COLOR_GRAY2RGB);
+        else if(frame.channels()==4)cv::cvtColor(frame,rgb,cv::COLOR_BGRA2RGB);
+        else cv::cvtColor(frame,rgb,cv::COLOR_BGR2RGB);
+        event_frames_ << QImage(rgb.data,rgb.cols,rgb.rows,static_cast<int>(rgb.step),QImage::Format_RGB888).copy();
+        event_offsets_ << elapsed_.elapsed();
+    }
     if (frame.size() == output_size_) {
         writer_.write(frame);
     } else {
@@ -95,17 +106,35 @@ void RecordTask::closeSegment()
     writer_.release();
     const QFileInfo file(segment_.filePath());
     if (file.exists() && file.size() > 0) {
-        emit segmentSaved(segment_.finish(QDateTime::currentDateTime(), file.size()));
+        const Video video=segment_.finish(QDateTime::currentDateTime(), file.size());
+        if(event_.active()){
+            emit eventSegmentSaved(video,event_.key(),event_confidence_,event_frames_,event_offsets_,
+                                   event_.shouldFinish(elapsed_.elapsed()));
+        }else emit segmentSaved(video);
     } else {
         const QString path = segment_.filePath();
         segment_.finish(QDateTime::currentDateTime(), 0);
         emit recordError(channel_id_,
             QStringLiteral("录像文件为空，未写入数据库：%1").arg(path));
     }
+    event_.reset();event_frames_.clear();event_offsets_.clear();
+    segment_.setDurationMs(static_cast<qint64>(segment_seconds_)*1000);
 }
 
 void RecordTask::stop()
 {
     closeSegment();
+    event_.reset();event_frames_.clear();event_offsets_.clear();
+    segment_.setDurationMs(static_cast<qint64>(segment_seconds_)*1000);
     enabled_ = false;
+}
+
+void RecordTask::beginEvent(const QString &key,double confidence)
+{
+    if(!enabled_ || event_.active() || key.isEmpty())return;
+    // 先封口普通段再开启事件段；同一时间只持有一个 VideoWriter。
+    closeSegment();
+    if(!event_.begin(key))return;
+    event_confidence_=confidence;event_frames_.clear();event_offsets_.clear();
+    segment_.setDurationMs(60000);
 }

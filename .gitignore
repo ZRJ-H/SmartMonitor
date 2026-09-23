@@ -31,3 +31,10 @@ build*/
 *.db
 *.sqlite
 .env
+
+.superpowers/
+.workflow/
+artifacts/
+*.moc
+records/
+images/

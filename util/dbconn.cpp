@@ -5,13 +5,13 @@
 DbConn* DbConn::dbConn = nullptr;
 
 DbConn::DbConn()
-    : db(QSqlDatabase::addDatabase("QMYSQL"))
+    : db(QSqlDatabase::addDatabase(qEnvironmentVariable("SMART_MONITOR_DB_DRIVER", "QMYSQL")))
 {
-    db.setHostName("127.0.0.1");
+    db.setHostName(qEnvironmentVariable("SMART_MONITOR_DB_HOST", "127.0.0.1"));
     db.setPort(3306);
-    db.setUserName("root");
-    db.setPassword("123456");
-    db.setDatabaseName("smart_monitor_db");
+    db.setUserName(qEnvironmentVariable("SMART_MONITOR_DB_USER", "root"));
+    db.setPassword(qEnvironmentVariable("SMART_MONITOR_DB_PASSWORD", "123456"));
+    db.setDatabaseName(qEnvironmentVariable("SMART_MONITOR_DB_NAME", "smart_monitor_db"));
 
     if (!db.open()) {
         qDebug() << "数据库连接失败："

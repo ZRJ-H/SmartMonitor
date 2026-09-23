@@ -1,5 +1,6 @@
 // 主窗口界面测试：验证启动后的四画面布局及通道控制、四行配置控件是否齐全。
 #include <QtTest>
+#include "testdatabase.h"
 
 #include "../view/mainwidget.h"
 
@@ -13,6 +14,23 @@ class Day3MainWidgetTests : public QObject
     Q_OBJECT
 
 private slots:
+    void managementPagesRequireLoginAndExposeRealControls() {
+        MainWidget widget;
+        auto imageButton=widget.findChild<QPushButton*>("imagesNavigation");
+        auto logButton=widget.findChild<QPushButton*>("logsNavigation");
+        QVERIFY(imageButton); QVERIFY(logButton);
+        QVERIFY(!imageButton->isEnabled()); QVERIFY(!logButton->isEnabled());
+        QVERIFY(widget.findChild<QLineEdit*>("imageDirectoryEdit"));
+        widget.setLoggedInUser(17,"admin17");
+        QVERIFY(imageButton->isEnabled()); QVERIFY(logButton->isEnabled());
+        imageButton->click();
+        QVERIFY(widget.findChild<QWidget*>("imagePage")->isEnabled());
+        logButton->click();
+        QVERIFY(widget.findChild<QWidget*>("operationLogPage")->isEnabled());
+    }
+
+    void initTestCase() { QVERIFY(initializeTestDatabase()); }
+    void cleanupTestCase() { DbConn::releaseDbConn(); }
     // 验证监控页初始显示四个可见视频窗口。
     void monitorPageStartsWithFourVisibleChannels();
     // 验证通道操作按钮和四组配置输入控件均已创建。

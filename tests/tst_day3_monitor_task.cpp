@@ -92,8 +92,12 @@ void Day3MonitorTaskTests::mp4FileSourceCanBeOpened()
     config.name = QStringLiteral("本地 MP4");
     config.sourceType = ChannelSourceType::File;
     config.filePath = path;
+    QVERIFY(QMetaObject::invokeMethod(&task, "configureCaptureInterval", Q_ARG(int, 500)));
+    QSignalSpy ready(&task, &MonitorTask::sourceReady);
     task.startCapture(config);
-    QTRY_VERIFY_WITH_TIMEOUT(frameSpy.count() >= 1, 1000);
+    QCOMPARE(ready.count(), 1);
+    QCOMPARE(ready.first().at(1).toDouble(), 2.0);
+    QTRY_VERIFY_WITH_TIMEOUT(frameSpy.count() >= 1, 1500);
     QCOMPARE(errorSpy.count(), 0);
     task.stopCapture();
 }

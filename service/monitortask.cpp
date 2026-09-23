@@ -23,10 +23,15 @@ MonitorTask::~MonitorTask()
     stopCapture();
 }
 
+void MonitorTask::configureCaptureInterval(int milliseconds)
+{
+    capture_interval_ms_ = qBound(10, milliseconds, 1000);
+}
+
 void MonitorTask::configureDetection(bool enabled, const QString &modelPath,
                                      double confidence)
 {
-    detection_enabled_ = enabled && config_.channelId == 1;
+    detection_enabled_ = enabled && config_.channelId >= 1 && config_.channelId <= 4;
     detection_model_path_ = modelPath.trimmed();
     detection_confidence_ = qBound(0.05, confidence, 0.99);
     detection_net_ = cv::dnn::Net();
@@ -82,7 +87,7 @@ void MonitorTask::startCapture(const ChannelConfig &config)
         fps = 25.0;
     }
 
-    capture_cadence_.configure(fps, 12.0);
+    capture_cadence_.configure(fps, qMin(12.0, 1000.0 / capture_interval_ms_));
     if (config_.sourceType == ChannelSourceType::Camera)
         capture_.set(cv::CAP_PROP_FPS, capture_cadence_.outputFps());
     capture_timer_->start(capture_cadence_.timerIntervalMs());
@@ -183,7 +188,9 @@ bool MonitorTask::readNextFrame(cv::Mat &frame)
     if (config_.sourceType == ChannelSourceType::Camera)
         return capture_.read(frame) && !frame.empty();
 
-    const int framesToAdvance = capture_cadence_.framesToAdvance();
+    int framesToAdvance = capture_cadence_.framesToAdvance();
+    const int frameCount = static_cast<int>(capture_.get(cv::CAP_PROP_FRAME_COUNT));
+    if (frameCount > 0) framesToAdvance = (framesToAdvance - 1) % frameCount + 1;
     for (int i = 0; i < framesToAdvance; ++i) {
         if (capture_.grab()) continue;
         // 文件结束后回到第一帧，实现持续循环预览。

@@ -78,3 +78,5 @@ win32 {
 }
 
 RESOURCES += resources.qrc
+
+include($$PWD/day7_day8.pri)

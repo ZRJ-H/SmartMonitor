@@ -10,6 +10,7 @@
 #include <QList>
 #include <QString>
 #include <QWidget>
+#include <QImage>
 
 #include <opencv2/core.hpp>
 
@@ -35,6 +36,10 @@ class MonitorTask;
 class RecordTask;
 
 // 应用主界面：只在 GUI 线程更新控件，视频读取由四个 MonitorTask 工作线程完成。
+class ImagePage;
+class OperationLogPage;
+class QSpinBox;
+
 class MainWidget : public QWidget
 {
     Q_OBJECT
@@ -46,7 +51,7 @@ public:
     ~MainWidget() override;
 
     // 登录成功后建立主窗口会话并更新登录按钮/标签。
-    void setLoggedInUser(const QString &userName);
+    void setLoggedInUser(int userId, const QString &userName);
 
 signals:
     // 未登录用户请求登录时发出，由 WindowManager 切换到登录窗口。
@@ -107,6 +112,26 @@ private slots:
     void on_detection_message(int channelId, const QString &message);
 
 private:
+    bool single_mode_ = false;
+    void apply_detection_mode();
+    void init_management_pages();
+    void update_management_access();
+    void open_linked_video(qint64 videoId, qint64 offsetMs);
+    void audit(const QString &function, const QString &description);
+    void take_preview_snapshot();
+    ImagePage *image_page_ = nullptr;
+    OperationLogPage *log_page_ = nullptr;
+    QPushButton *images_button_ = nullptr;
+    QPushButton *logs_button_ = nullptr;
+    QLineEdit *image_directory_edit_ = nullptr;
+    QSpinBox *capture_interval_spin_ = nullptr;
+    QComboBox *query_type_ = nullptr;
+    QString image_directory_;
+    QString recovery_directory_;
+    int capture_interval_value_ = 40;
+    QImage latest_frames_[4];
+    VideoRecord current_playback_;
+    qint64 pending_playback_offset_ = 0;
     // 分别创建控件、应用样式、建立信号槽、启动时钟和工作线程。
     void init_ui();
     void init_style();

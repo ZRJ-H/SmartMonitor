@@ -1,5 +1,6 @@
 // 通道配置单元测试：覆盖默认四通道、资源冲突、启动校验、JSON 和数据库往返。
 #include <QtTest>
+#include "testdatabase.h"
 
 #include "../model/channelconfig.h"
 #include "../service/channelconfigpolicy.h"
@@ -11,6 +12,8 @@ class Day3ChannelConfigTests : public QObject
     Q_OBJECT
 
 private slots:
+    void initTestCase() { QVERIFY(initializeTestDatabase()); }
+    void cleanupTestCase() { DbConn::releaseDbConn(); }
     // 验证默认配置的通道数量、编号和名称符合界面约定。
     void defaultsMatchDay3Plan();
     // 验证同一摄像头不能同时分配给多个通道。
