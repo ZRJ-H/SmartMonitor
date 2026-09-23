@@ -11,10 +11,15 @@ if(!$SkipBuild){& "$PSScriptRoot/build-and-test.ps1" -QtRoot $QtRoot -MinGWRoot 
 $report=Get-Content "$root/artifacts/verification/latest.json" -Raw | ConvertFrom-Json
 $expected=@(Get-ChildItem "$root/tests/*_tests.pro").Count+1
 if($report.status -ne 'passed' -or $report.results.Count -ne $expected){throw 'Full build/test verification required before packaging'}
-$source="$root/.workflow/build/day15_pro/bin/day20_smart_monitor.exe"
+if(!$report.sourceFingerprint -or (& "$PSScriptRoot/source-fingerprint.ps1" -Root $root) -ne $report.sourceFingerprint){throw 'Source differs from verified build; rerun full verification'}
+$app=@($report.results | Where-Object {$_.project -eq 'day15_pro.pro'})
+if($app.Count -ne 1){throw 'Verified application missing'}
+$source=$app[0].executable
+if((Get-FileHash -LiteralPath $source -Algorithm SHA256).Hash -ne $app[0].sha256){throw 'Executable differs from verified binary'}
 $target=Join-Path $root ('artifacts/releases/SmartMonitor-'+(Get-Date -Format 'yyyyMMdd-HHmmss'))
 New-Item -ItemType Directory -Force $target | Out-Null
 Copy-Item -LiteralPath $source -Destination $target
+$commit = & git -C $root rev-parse HEAD
 $savedPath=$env:PATH
 try{
     $env:PATH="$MinGWRoot/bin;$QtRoot/bin;$env:SystemRoot/System32"
@@ -32,7 +37,7 @@ try{
     $files=Get-ChildItem -LiteralPath $target -Recurse -File | ForEach-Object {
         @{ path=$_.FullName.Substring($target.Length+1); sha256=(Get-FileHash -LiteralPath $_.FullName -Algorithm SHA256).Hash }
     }
-    @{commit=(& git -C $root rev-parse HEAD); verificationRun=$report.runId; files=$files} |
+    @{commit=$report.gitCommit; dirty=$report.dirty; sourceFingerprint=$report.sourceFingerprint; verificationRun=$report.runId; files=$files} |
         ConvertTo-Json -Depth 5 | Set-Content -Encoding utf8 "$target/manifest.json"
     Set-Content -Encoding utf8 "$root/artifacts/releases/latest.txt" $target
     Write-Output $target

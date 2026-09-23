@@ -24,3 +24,13 @@ ON DUPLICATE KEY UPDATE config_key=VALUES(config_key);
 INSERT INTO sys_config(config_key,config_value)
 SELECT 'record.segment_seconds',config_value FROM (SELECT config_value FROM sys_config WHERE config_key='record_segment_seconds') s
 ON DUPLICATE KEY UPDATE config_key=VALUES(config_key);
+
+-- Event-type filtering uses a correlated video_path lookup; keep it indexed on old installations too.
+SET @event_path_index_sql = IF(
+ (SELECT COUNT(*) FROM information_schema.statistics WHERE table_schema=DATABASE()
+   AND table_name='monitor_event' AND index_name='idx_monitor_event_video_path') = 0,
+ 'ALTER TABLE monitor_event ADD INDEX idx_monitor_event_video_path(video_path(191))',
+ 'SELECT 1');
+PREPARE event_path_index_stmt FROM @event_path_index_sql;
+EXECUTE event_path_index_stmt;
+DEALLOCATE PREPARE event_path_index_stmt;

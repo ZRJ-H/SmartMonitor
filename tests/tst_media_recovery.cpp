@@ -22,8 +22,13 @@ private slots:
     QSqlQuery q(db);
     QVERIFY(q.exec("CREATE TABLE video(id INTEGER PRIMARY KEY,video_name TEXT,video_path TEXT UNIQUE,channel_id INTEGER,start_time TEXT,end_time TEXT,file_size INTEGER)"));
     QVERIFY(q.exec("CREATE TABLE monitor_event(video_path TEXT)"));
+    for(int i=0;i<20;++i){
+        QFile bad(dir.filePath(QString("pending/000%1.json").arg(i,2,10,QChar('0'))));
+        QVERIFY(bad.open(QIODevice::WriteOnly));bad.write("not-json");bad.close();
+    }
     MediaRecoveryService restarted(db,dir.filePath("pending"),dir.filePath("images"));
-    QStringList errors;QCOMPARE(restarted.replay(errors),1);QVERIFY(errors.isEmpty());
+    QStringList errors;QCOMPARE(restarted.replay(errors),0);QCOMPARE(errors.size(),20);
+    QCOMPARE(restarted.replay(errors),1);
     QCOMPARE(restarted.replay(errors),0);
     QVERIFY(q.exec("SELECT COUNT(*) FROM video"));QVERIFY(q.next());QCOMPARE(q.value(0).toInt(),1);
     QVERIFY(QFile::exists(path));

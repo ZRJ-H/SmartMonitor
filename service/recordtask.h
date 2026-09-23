@@ -48,6 +48,8 @@ private:
     QElapsedTimer frame_clock_;
     FrameRateLimiter frame_limiter_;
     cv::Size output_size_;
+    qint64 written_frames_ = 0;
+    cv::Mat last_encoded_frame_;
 };
 
 #endif // RECORDTASK_H

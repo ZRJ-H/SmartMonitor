@@ -6,6 +6,7 @@
 #include <QSqlError>
 #include <QTemporaryFile>
 #include <QUuid>
+#include <QBuffer>
 
 ImageService::ImageService(const QSqlDatabase &database,
                            const QString &imageDirectory)
@@ -63,13 +64,14 @@ bool ImageService::saveEventImages(const QList<QImage> &frames, int channelId,
         image.videoId = videoId;
         image.videoOffsetMs = offsets.isEmpty() ? 0 : offsets.at(index);
         image.captureTime = capturedAt.addMSecs(image.videoOffsetMs);
+        const bool alreadyOnDisk = QFileInfo::exists(image.imagePath);
         if (!saveOne(frames.at(index), image, errorText)) {
             db.rollback();
             for (const QString &path : createdFiles) QFile::remove(path);
             saved.clear();
             return false;
         }
-        createdFiles << image.imagePath;
+        if (!alreadyOnDisk) createdFiles << image.imagePath;
         saved << image;
     }
     if (!db.commit()) {
@@ -223,6 +225,17 @@ bool ImageService::ensureDirectory(QString &errorText) const
 bool ImageService::saveOne(const QImage &frame, FeatureImage &image,
                            QString &errorText)
 {
+    if (!frame.isNull() && image.captureSource == "event" && image.exceptionId > 0
+            && QFileInfo::exists(image.imagePath)) {
+        QByteArray expected; QBuffer buffer(&expected); buffer.open(QIODevice::WriteOnly);
+        QFile existing(image.imagePath);
+        if (frame.save(&buffer,"JPG",92) && existing.open(QIODevice::ReadOnly)
+                && existing.readAll() == expected) {
+            // The metadata transaction rolled back after an atomic file rename.
+            // Adopt only byte-identical event media; never overwrite an unknown file.
+            return model.insert(image,errorText);
+        }
+    }
     if (frame.isNull() || QFileInfo::exists(image.imagePath)) {
         errorText = QString::fromUtf8("图片文件保存失败：%1").arg(image.imageName);
         return false;

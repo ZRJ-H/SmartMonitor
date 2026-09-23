@@ -25,7 +25,7 @@
 ## 安装与数据库
 
 发布包生成于 artifacts/releases，含 Qt/OpenCV/MinGW/QMYSQL 运行依赖、SQL 和维护脚本。
-启动前安装兼容的 MySQL 5.7 服务。全新环境可人工执行 database/smart_monitor_schema.sql；
+启动前安装兼容的 MySQL 5.7 服务和 Microsoft Visual C++ x64 运行库。全新环境可人工执行 database/smart_monitor_schema.sql；
 该文件明确使用 smart_monitor_db，不能不经修改用于别名隔离库。
 已有环境仅运行 database/project_completion_migration.sql。迁移前备份，不执行清库。
 

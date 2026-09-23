@@ -11,6 +11,7 @@
 #include <QJsonDocument>
 #include <QJsonArray>
 #include <QCryptographicHash>
+#include <algorithm>
 MediaRecoveryService::MediaRecoveryService(const QSqlDatabase &database,const QString &queue,const QString &images)
  :db(database),queueDirectory(queue),imageDirectory(images){}
 bool MediaRecoveryService::submit(const Video &v,const QString &key,double confidence,const QList<QImage> &frames,const QList<qint64> &offsets,bool complete,QString &error){
@@ -54,8 +55,17 @@ bool MediaRecoveryService::apply(const QJsonObject &o,QString &error){
 int MediaRecoveryService::replay(QStringList &errors,int limit){
     errors.clear();int count=0,attempted=0;
     QDir directory(queueDirectory);
-    for(const auto &name:directory.entryList({"*.json"},QDir::Files,QDir::Name)){
+    if (limit < 1) return 0;
+    QStringList names=directory.entryList({"*.json"},QDir::Files,QDir::Name);
+    QFile cursor(directory.filePath(".cursor"));
+    QString last;
+    if(cursor.open(QIODevice::ReadOnly)){last=QString::fromUtf8(cursor.readAll());cursor.close();}
+    const auto after=std::upper_bound(names.begin(),names.end(),last);
+    std::rotate(names.begin(),after,names.end());
+    for(const auto &name:names){
         if(attempted++>=limit)break;
+        QSaveFile nextCursor(directory.filePath(".cursor"));
+        if(nextCursor.open(QIODevice::WriteOnly)){nextCursor.write(name.toUtf8());nextCursor.commit();}
         QFile file(directory.filePath(name));QString error;
         if(!file.open(QIODevice::ReadOnly)){errors<<file.errorString();continue;}
         QJsonParseError parse;const auto doc=QJsonDocument::fromJson(file.readAll(),&parse);file.close();

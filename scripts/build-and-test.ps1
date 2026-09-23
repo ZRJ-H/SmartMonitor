@@ -17,6 +17,9 @@ $make = Join-Path $MinGWRoot 'bin/mingw32-make.exe'
 foreach ($tool in @($qmake,$make,(Join-Path $QtRoot 'bin/moc.exe'))) {
     if (!(Test-Path -LiteralPath $tool)) { throw "Missing tool: $tool" }
 }
+$sourceFingerprint = & "$PSScriptRoot/source-fingerprint.ps1" -Root $root
+$gitCommit = & git -C $root rev-parse HEAD
+$dirty = [bool](& git -C $root status --porcelain)
 $runId = Get-Date -Format 'yyyyMMdd-HHmmss-fff'
 $results = @()
 @{ status='running'; runId=$runId; startedAt=(Get-Date).ToString('o') } | ConvertTo-Json | Set-Content -Encoding utf8 "$report/latest.json"
@@ -78,12 +81,13 @@ try {
                 if ($process.ExitCode -ne 0) { throw "Test failed: $name (exit $($process.ExitCode))" }
                 $results += [pscustomobject]@{ project=$project; status='passed'; log=$testLog }
             } else {
-                $results += [pscustomobject]@{ project=$project; status='built'; executable="$destination/day20_smart_monitor.exe" }
+                $results += [pscustomobject]@{ project=$project; status='built'; executable="$destination/day20_smart_monitor.exe"; sha256=(Get-FileHash -LiteralPath "$destination/day20_smart_monitor.exe" -Algorithm SHA256).Hash }
                 Write-Host "$name built"
             }
         } finally { Pop-Location }
     }
-    @{ status='passed'; runId=$runId; completedAt=(Get-Date).ToString('o'); results=$results } | ConvertTo-Json -Depth 5 | Set-Content -Encoding utf8 "$report/latest.json"
+    if ((& "$PSScriptRoot/source-fingerprint.ps1" -Root $root) -ne $sourceFingerprint) { throw 'Source changed during verification; rerun against a stable checkout' }
+    @{ status='passed'; sourceFingerprint=$sourceFingerprint; gitCommit=$gitCommit; dirty=$dirty; runId=$runId; completedAt=(Get-Date).ToString('o'); results=$results } | ConvertTo-Json -Depth 5 | Set-Content -Encoding utf8 "$report/latest.json"
 } catch {
     @{ status='failed'; runId=$runId; error=$_.Exception.Message; completedProjects=$results } | ConvertTo-Json -Depth 5 | Set-Content -Encoding utf8 "$report/latest.json"
     throw

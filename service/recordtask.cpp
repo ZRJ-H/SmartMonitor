@@ -69,6 +69,8 @@ bool RecordTask::openWriter(const cv::Mat &frame)
         return false;
     }
     emit segmentStarted(channel_id_, segment_.filePath());
+    written_frames_ = 0;
+    last_encoded_frame_.release();
     elapsed_.restart();
     return true;
 }
@@ -83,26 +85,35 @@ void RecordTask::saveFrame(const cv::Mat &frame, int channelId)
         enabled_ = false;
         return;
     }
+    // Fill gaps with the last observed frame, keeping the fixed-FPS file on wall-clock time.
+    const qint64 targetIndex = qRound64(elapsed_.elapsed() * fps_ / 1000.0);
+    while (!last_encoded_frame_.empty() && written_frames_ < targetIndex) {
+        writer_.write(last_encoded_frame_);
+        ++written_frames_;
+    }
     if(event_.takeSample(elapsed_.elapsed())){
         cv::Mat rgb;
         if(frame.channels()==1)cv::cvtColor(frame,rgb,cv::COLOR_GRAY2RGB);
         else if(frame.channels()==4)cv::cvtColor(frame,rgb,cv::COLOR_BGRA2RGB);
         else cv::cvtColor(frame,rgb,cv::COLOR_BGR2RGB);
         event_frames_ << QImage(rgb.data,rgb.cols,rgb.rows,static_cast<int>(rgb.step),QImage::Format_RGB888).copy();
-        event_offsets_ << elapsed_.elapsed();
+        event_offsets_ << qRound64(written_frames_ * 1000.0 / fps_);
     }
-    if (frame.size() == output_size_) {
-        writer_.write(frame);
-    } else {
-        cv::Mat resized;
-        cv::resize(frame, resized, output_size_, 0.0, 0.0, cv::INTER_AREA);
-        writer_.write(resized);
-    }
+    if (frame.size() == output_size_) last_encoded_frame_ = frame.clone();
+    else cv::resize(frame, last_encoded_frame_, output_size_, 0.0, 0.0, cv::INTER_AREA);
+    writer_.write(last_encoded_frame_);
+    ++written_frames_;
 }
 
 void RecordTask::closeSegment()
 {
     if (!writer_.isOpened()) return;
+    const qint64 capMs = event_.active() ? 60000 : static_cast<qint64>(segment_seconds_) * 1000;
+    const qint64 expected = qRound64(qMin(elapsed_.elapsed(),capMs) * fps_ / 1000.0);
+    while (!last_encoded_frame_.empty() && written_frames_ < expected) {
+        writer_.write(last_encoded_frame_);
+        ++written_frames_;
+    }
     writer_.release();
     const QFileInfo file(segment_.filePath());
     if (file.exists() && file.size() > 0) {

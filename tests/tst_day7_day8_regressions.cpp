@@ -18,6 +18,7 @@ private slots:
     void distinctEventsInSameSecondDoNotCollide();
     void repeatedEventDoesNotCreateMoreThanThreeImages();
     void logsArePagedDeterministically();
+    void adoptsMatchingOrphanEventImage();
 private:
     QSqlDatabase database;
     QString connectionName;
@@ -127,6 +128,18 @@ void Day7Day8RegressionTests::logsArePagedDeterministically()
     QCOMPARE(firstPage.at(1).operationFunc, QString("op4"));
     QCOMPARE(secondPage.at(0).operationFunc, QString("op3"));
     QCOMPARE(secondPage.at(1).operationFunc, QString("op2"));
+}
+
+void Day7Day8RegressionTests::adoptsMatchingOrphanEventImage() {
+    QTemporaryDir dir; ImageService service(database,dir.path());
+    const QDateTime captured(QDate(2026,9,23),QTime(12,0));
+    QImage frame(8,8,QImage::Format_RGB32);frame.fill(Qt::green);
+    const QString folder=dir.filePath("event-55");QVERIFY(QDir().mkpath(folder));
+    const QString orphan=QDir(folder).filePath("异常_通道1_20260923120000_1.jpg");
+    QVERIFY(frame.save(orphan,"JPG",92));
+    QList<FeatureImage> images;QString error;
+    QVERIFY2(service.saveEventImages({frame,frame,frame},1,55,captured,images,error),qPrintable(error));
+    QCOMPARE(images.size(),3);QVERIFY(QFile::exists(orphan));
 }
 
 QTEST_GUILESS_MAIN(Day7Day8RegressionTests)

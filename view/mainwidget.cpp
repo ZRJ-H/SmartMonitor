@@ -32,9 +32,6 @@
 #include <QAudioOutput>
 #include <QVideoWidget>
 #include <QUrl>
-#include <QStandardPaths>
-#include <QSettings>
-#include "../service/backupservice.h"
 #include <QCoreApplication>
 #include <QDir>
 #include <QFileInfo>
@@ -1014,7 +1011,7 @@ void MainWidget::init_workers()
                 QString error;MediaRecoveryService events(DbConn::getInstance()->database(),recovery_directory_,image_directory_);
                 if(!events.submit(video,key,confidence,frames,offsets,complete,error))
                     lab_storage_warning->setText("事件录像已保存，媒体入库失败："+error);
-                else audit("智能事件",key+(complete?" 已完成":" 提前结束"));
+                else audit("智能事件",key+(complete?" 已完成":" 提前结束"),0);
                 const int index=video.getChannelId()-1;
                 if(index>=0&&index<4&&active_record_paths_[index]==video.getVideoPath())active_record_paths_[index].clear();
             },Qt::QueuedConnection);
@@ -1206,7 +1203,7 @@ void MainWidget::on_record_error(int channelId, const QString &message)
 
 void MainWidget::on_storage_warning(int channelId, const QString &message)
 {
-    audit("磁盘告警",QString("通道%1：%2").arg(channelId).arg(message));
+    audit("磁盘告警",QString("通道%1：%2").arg(channelId).arg(message),0);
     qWarning().noquote() << message;
     lab_storage_warning->setText(message);
 }
@@ -1559,22 +1556,24 @@ void MainWidget::init_management_pages()
     auto backupButton = new QPushButton("立即备份数据库", this);
     backupButton->setObjectName("backupDatabaseButton");
     page_stack->widget(2)->layout()->addWidget(backupButton);
-    const auto startBackup = [this,backup]{
+    const auto startBackup = [this,backup](int actorId){
+        if(backup->running()) return;
+        backup->setProperty("actorId",actorId);
         const QString root = QStandardPaths::writableLocation(QStandardPaths::AppLocalDataLocation);
         const QString executable = qEnvironmentVariable("SMART_MONITOR_MYSQLDUMP",
              "C:/Program Files/MySQL/MySQL Server 5.7/bin/mysqldump.exe");
         backup->start(DbConn::getInstance()->database(),QDir(root).filePath("backups"),executable);
     };
     connect(backupButton,&QPushButton::clicked,this,[this,startBackup]{
-        if(require_permission(AuthPermission::Settings,"备份数据库"))startBackup();
+        if(require_permission(AuthPermission::Settings,"备份数据库"))startBackup(auth_session.userId());
     });
-    connect(backup,&BackupService::finished,this,[this,backupButton](bool success,const QString &detail){
+    connect(backup,&BackupService::finished,this,[this,backupButton,backup](bool success,const QString &detail){
         backupButton->setEnabled(true);
         lab_storage_warning->setText(detail);
         if(success) {
             QSettings settings;
             settings.setValue("backup/lastSuccess",QDateTime::currentDateTime());
-            audit("数据库备份",detail);
+            audit("数据库备份",detail,backup->property("actorId").toInt());
         }
     });
     auto dailyBackup = new QTimer(this);
@@ -1582,7 +1581,7 @@ void MainWidget::init_management_pages()
         QSettings settings;
         const auto last=settings.value("backup/lastSuccess").toDateTime();
         if(!backup->running() && (!last.isValid() || last.secsTo(QDateTime::currentDateTime())>=86400))
-            startBackup();
+            startBackup(0);
     };
     connect(dailyBackup,&QTimer::timeout,this,backupIfDue);
     if(qEnvironmentVariable("SMART_MONITOR_AUTOSTART")!="0") {
@@ -1608,10 +1607,10 @@ void MainWidget::update_management_access()
     if(image_page_)image_page_->setEnabled(allowed);
     if(log_page_)log_page_->setEnabled(allowed);
 }
-void MainWidget::audit(const QString &function,const QString &description)
+void MainWidget::audit(const QString &function,const QString &description, int actorId)
 {
     OperationLogService service(DbConn::getInstance()->database());QString error;
-    if(!service.record(auth_session.userId(),function,description,QDateTime::currentDateTime(),error))
+    if(!service.record(actorId < 0 ? auth_session.userId() : actorId,function,description,QDateTime::currentDateTime(),error))
         lab_storage_warning->setText("操作成功，审计日志写入失败："+error);
 }
 void MainWidget::open_linked_video(qint64 id,qint64 offset)

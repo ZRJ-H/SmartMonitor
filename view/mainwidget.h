@@ -117,7 +117,7 @@ private:
     void init_management_pages();
     void update_management_access();
     void open_linked_video(qint64 videoId, qint64 offsetMs);
-    void audit(const QString &function, const QString &description);
+    void audit(const QString &function, const QString &description, int actorId = -1);
     void take_preview_snapshot();
     ImagePage *image_page_ = nullptr;
     OperationLogPage *log_page_ = nullptr;

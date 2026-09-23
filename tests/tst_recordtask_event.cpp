@@ -22,6 +22,8 @@ private slots:
     QCOMPARE(normalCount,1);QCOMPARE(eventCount,1);QVERIFY(normalPath!=eventPath);
     cv::VideoCapture normal(normalPath.toStdString()),event(eventPath.toStdString());
     QVERIFY(normal.isOpened());QVERIFY(event.isOpened());
+    const double duration=event.get(cv::CAP_PROP_FRAME_COUNT)/event.get(cv::CAP_PROP_FPS);
+    QVERIFY2(duration>=2.0,"Sparse source frames must not compress two seconds into 0.3 seconds");
  }
  void sameSecondSegmentUsesAnotherFileName(){
     QTemporaryDir dir;RecordingSegment segment;
