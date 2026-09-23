@@ -30,10 +30,16 @@
 恢复至 smart_monitor_verify_20260923_105750，两次迁移后原记录数不变。
 之后仅隔离库增加测试事件及三图，验证真实外键和文件可打开。
 
-生产库尚未迁移。自动审批拒绝直接修改生产结构，要求明确批准具体变更。
-待执行脚本包括：event_media_link 关联表、日志管理员可为空、
-补缺失兼容配置键、monitor_event.video_path 前缀索引。
-不删除媒体、不覆盖已有配置。证据 migration-and-restore.json 位于 artifacts/verification。
+用户于 2026-09-23 明确批准后，生产迁移已完成。
+迁移前备份：artifacts/backups/smart_monitor_db-20260923-114412-788.sql，
+SHA256：47bf2116e9bfe65b9b240a4ba15c9fd1098830ee315af638e68b442af46e2fa8。
+event_media_link 表及两个外键、日志管理员可空字段、事件路径索引均已核对。
+录像 198、配置 10、图片/事件/操作日志各 0、管理员 3、通道 4，迁移前后数量一致；
+原配置值不变，本次没有需要补入的配置键。
+证据：artifacts/verification/production-migration.json。旧隔离库演练证据另行保留。
+
+第一次调用旧 powershell.exe 时，备份脚本因未加载 Get-FileHash 在结构迁移前停止；
+随后用已验证的 PowerShell 7 重新备份、迁移并完成核对，没有绕过失败步骤。
 
 ## 性能
 
@@ -66,7 +72,6 @@
 MySQL 客户端还依赖 Microsoft Visual C++ x64 运行库，部署机必须安装。
 
 保持开放：
-- 明确批准并执行生产迁移。
 - 真实摄像头和 ONNX 模型的有人/无人/进出画面演示及完整约 60 秒事件验证。
 - 干净 Windows 安装、实际 USB 导出、低磁盘和设备拔插测试。
 - 7×24 小时连续运行，无卡死、持续积压或明显内存增长。
@@ -74,3 +79,7 @@ MySQL 客户端还依赖 Microsoft Visual C++ x64 运行库，部署机必须安
 
 SQL 备份含结构、配置和索引；媒体文件与模型需独立备份。
 突然断电时未封口 MP4 的修复不在当前保证范围。
+
+## 接管与带学
+
+从 [学习入口](../learning/README.md) 开始；学习进度与业务验收分别记录。

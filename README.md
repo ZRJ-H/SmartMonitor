@@ -10,4 +10,6 @@
     ./scripts/run-dev.ps1 -NoCapture
     ./scripts/package-release.ps1
 
-当前为集成候选版，尚未完成生产库授权迁移、硬件/模型现场验证和七天长稳验收。
+生产数据库迁移已获授权并完成。当前仍为集成候选版，硬件/模型现场验证和七天长稳验收保持开放。
+
+学习与接管从 [90 分钟导览及带学路线](docs/learning/README.md) 开始。
