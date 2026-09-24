@@ -30,7 +30,7 @@ private slots:
     void showLoginWindow();
     // 登录成功后记录用户名、关闭登录窗口并恢复主窗口。
     void onLoginSuccess(int userId, const QString &userName);
-    // 用户取消登录时关闭登录窗口并恢复主窗口。
+    // 用户取消登录时退出应用，不能绕过登录进入监控。
     void onLoginCancelled();
 
 private:

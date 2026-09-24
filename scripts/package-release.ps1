@@ -23,17 +23,15 @@ $commit = & git -C $root rev-parse HEAD
 $savedPath=$env:PATH
 try{
     $env:PATH="$MinGWRoot/bin;$QtRoot/bin;$env:SystemRoot/System32"
-    & "$QtRoot/bin/windeployqt.exe" --release --compiler-runtime --no-translations "$target/day20_smart_monitor.exe" *> "$target/deployment.log"
-    if($LASTEXITCODE -ne 0){throw 'windeployqt failed'}
-    foreach($dll in @('libopencv_world4140.dll','opencv_videoio_ffmpeg4140_64.dll')){
-        Copy-Item -LiteralPath "$OpenCVBin/$dll" -Destination $target
-    }
-    New-Item -ItemType Directory -Force "$target/sqldrivers" | Out-Null
-    Copy-Item -LiteralPath "$MySQLRuntime/sqldrivers/qsqlmysql.dll" -Destination "$target/sqldrivers"
-    Copy-Item -LiteralPath "$MySQLRuntime/libmysql.dll" -Destination $target
+    & "$PSScriptRoot/deploy-runtime.ps1" -OutputDir $target -QtRoot $QtRoot -MinGWRoot $MinGWRoot -OpenCVBin $OpenCVBin -MySQLRuntime $MySQLRuntime -CleanStart
     Copy-Item -LiteralPath "$root/database","$root/scripts" -Destination $target -Recurse
     if(Test-Path "$root/docs/DEVELOPMENT.md"){Copy-Item "$root/docs/DEVELOPMENT.md" "$target/README.md"}
-    @('[Paths]','Plugins=.') | Set-Content -Encoding ascii "$target/qt.conf"
+    New-Item -ItemType Directory -Force "$target/models" | Out-Null
+    Copy-Item -LiteralPath "$root/models/README.md" -Destination "$target/models/README.md"
+    # Cisco 二进制由目标机器独立下载，发布包保留安装说明和许可。
+    Copy-Item -LiteralPath "$root/docs/runtime-setup.md" -Destination "$target/RUNTIME-SETUP.md"
+    Copy-Item -LiteralPath "$root/docs/third-party" -Destination $target -Recurse
+    Write-Warning 'Release users must install OpenH264 separately and select a compatible YOLO model; see RUNTIME-SETUP.md.'
     $files=Get-ChildItem -LiteralPath $target -Recurse -File | ForEach-Object {
         @{ path=$_.FullName.Substring($target.Length+1); sha256=(Get-FileHash -LiteralPath $_.FullName -Algorithm SHA256).Hash }
     }

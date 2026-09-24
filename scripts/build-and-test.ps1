@@ -27,7 +27,7 @@ $savedPath = $env:PATH
 $savedPlugin = $env:QT_PLUGIN_PATH
 $savedPlatform = $env:QT_QPA_PLATFORM
 try {
-    $env:PATH = "$MinGWRoot/bin;$QtRoot/bin;$OpenCVBin;$savedPath"
+    $env:PATH = "$root/bin;$MinGWRoot/bin;$QtRoot/bin;$OpenCVBin;$savedPath"
     $env:QT_PLUGIN_PATH = "$QtRoot/plugins"
     $env:QT_QPA_PLATFORM = 'offscreen'
     # 只镜像版本控制中的输入，避免源目录遗留 moc 文件破坏影子构建的依赖图。
@@ -68,10 +68,20 @@ try {
         try {
             $destination = "$build/bin".Replace('\','/')
             $projectPath = Join-Path $snapshot $project
-            & $qmake $projectPath -spec win32-g++ 'CONFIG+=release' 'CONFIG-=debug' -after "DESTDIR=$destination" *> "$report/$name-qmake.log"
+            & $qmake $projectPath -spec win32-g++ 'CONFIG+=release' 'CONFIG-=debug' "DESTDIR=$destination" "OPENH264_RUNTIME_DLL=$root/bin/openh264-2.5.0-win64.dll" -after "DESTDIR=$destination" *> "$report/$name-qmake.log"
             if ($LASTEXITCODE -ne 0) { throw "qmake failed: $name; see artifacts/verification" }
             & $make "-j$Jobs" *> "$report/$name-build.log"
             if ($LASTEXITCODE -ne 0) { Get-Content "$report/$name-build.log" -Tail 15; throw "Build failed: $name" }
+            # 即使目标未重新链接，也确保实际 EXE 目录具有运行依赖。
+            foreach ($dll in @('libopencv_world4140.dll','opencv_videoio_ffmpeg4140_64.dll')) {
+                Copy-Item -LiteralPath "$OpenCVBin/$dll" -Destination $destination -Force
+            }
+            $h264 = "$root/bin/openh264-2.5.0-win64.dll"
+            if (Test-Path -LiteralPath $h264) {
+                Copy-Item -LiteralPath $h264 -Destination $destination -Force
+            } else {
+                Write-Warning 'OpenH264 missing: H.264 unavailable; recording will attempt mp4v fallback. See docs/runtime-setup.md.'
+            }
             if ($project -like 'tests/*') {
                 $test = Join-Path $destination "$name.exe"
                 $testLog = Join-Path $report "$name-test.txt"
@@ -81,6 +91,7 @@ try {
                 if ($process.ExitCode -ne 0) { throw "Test failed: $name (exit $($process.ExitCode))" }
                 $results += [pscustomobject]@{ project=$project; status='passed'; log=$testLog }
             } else {
+                & "$PSScriptRoot/deploy-runtime.ps1" -OutputDir $destination -QtRoot $QtRoot -MinGWRoot $MinGWRoot -OpenCVBin $OpenCVBin -CleanStart
                 $results += [pscustomobject]@{ project=$project; status='built'; executable="$destination/day20_smart_monitor.exe"; sha256=(Get-FileHash -LiteralPath "$destination/day20_smart_monitor.exe" -Algorithm SHA256).Hash }
                 Write-Host "$name built"
             }

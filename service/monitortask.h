@@ -25,6 +25,8 @@ class MonitorTask : public QObject
 public:
     explicit MonitorTask(QObject *parent = nullptr);
     ~MonitorTask() override;
+    // 只在任务所属线程调用；返回已打开解码器报告的线程数，关闭时为 0。
+    int decoderThreadCount() const;
 
 public slots:
     // 打开 config 指定的摄像头或文件，并按源帧率启动定时采集。
@@ -53,6 +55,7 @@ signals:
                         const QDateTime &eventTime, double confidence);
 
 private:
+    bool openFileCapture();
     bool readNextFrame(cv::Mat &frame);
     void publishFrame(const cv::Mat &frame);
     cv::VideoCapture capture_; // 当前通道的 OpenCV 数据源句柄。

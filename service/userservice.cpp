@@ -75,3 +75,19 @@ QString UserService::md5Text(const QString &text)
     );
     return QString::fromLatin1(digest.toHex());
 }
+
+RegistrationResult UserService::registerUser(const QString &name, const QString &password, const QString &confirmation)
+{
+    if (!AuthPolicy::isUserNameValid(name.trimmed()))
+        return {RegistrationResult::InvalidUserName, QStringLiteral("账号须为 6-10 位字母、数字或下划线。")};
+    if (!AuthPolicy::isPasswordValid(password))
+        return {RegistrationResult::InvalidPassword, QStringLiteral("密码须为 6-8 位且不能包含空白字符。")};
+    if (password != confirmation)
+        return {RegistrationResult::PasswordMismatch, QStringLiteral("两次输入的密码不一致。")};
+    const auto result = user_model.createUser(name.trimmed(), md5Text(password));
+    if (result == UserModel::Duplicate)
+        return {RegistrationResult::DuplicateUser, QStringLiteral("该用户名已存在，请更换用户名。")};
+    if (result != UserModel::Created)
+        return {RegistrationResult::DatabaseError, QStringLiteral("注册失败，请检查数据库连接后重试。")};
+    return {RegistrationResult::Success, QStringLiteral("注册成功，请输入密码和验证码登录。")};
+}

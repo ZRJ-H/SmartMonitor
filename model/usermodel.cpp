@@ -65,7 +65,7 @@ int UserModel::updateLoginTime(int &userId)
     QSqlQuery query(connection->database());
     query.prepare(
         "UPDATE admin_user "
-        "SET last_login_time = NOW() "
+        "SET last_login_time = CURRENT_TIMESTAMP "
         "WHERE id = :id"
     );
     query.bindValue(":id", userId);
@@ -80,4 +80,29 @@ int UserModel::updateLoginTime(int &userId)
 QString UserModel::lastErrorText() const
 {
     return last_error_text;
+}
+
+UserModel::CreateResult UserModel::createUser(const QString &username, const QString &passwordHash)
+{
+    last_error_text.clear();
+    auto *connection = DbConn::getInstance();
+    if (!connection->isOpen()) {
+        last_error_text = connection->lastErrorText();
+        return CreateError;
+    }
+    QSqlQuery query(connection->database());
+    query.prepare("INSERT INTO admin_user (username, password, status) VALUES (:name, :password, 1)");
+    query.bindValue(":name", username);
+    query.bindValue(":password", passwordHash);
+    if (query.exec()) return Created;
+    last_error_text = query.lastError().text();
+    // Let the unique database key arbitrate concurrent registrations too.
+    QSqlQuery existing(connection->database());
+    existing.prepare("SELECT id FROM admin_user WHERE username = :name");
+    existing.bindValue(":name", username);
+    if (existing.exec() && existing.next()) {
+        last_error_text.clear();
+        return Duplicate;
+    }
+    return CreateError;
 }

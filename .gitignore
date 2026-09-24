@@ -37,4 +37,5 @@ build*/
 artifacts/
 *.moc
 records/
+models/*.onnx
 images/

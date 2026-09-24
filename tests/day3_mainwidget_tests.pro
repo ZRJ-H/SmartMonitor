@@ -56,3 +56,6 @@ HEADERS += \
 
 
 include($$PWD/../day7_day8.pri)
+
+HEADERS += ../view/apptheme.h
+RESOURCES += ../resources.qrc

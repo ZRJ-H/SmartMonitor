@@ -23,7 +23,8 @@ QString AuthSession::userName() const
 
 bool AuthSession::canAccess(AuthPermission permission) const
 {
-    return permission == AuthPermission::LivePreview || isLoggedIn();
+    Q_UNUSED(permission);
+    return isLoggedIn();
 }
 
 void AuthSession::login(int userId, const QString &userName)

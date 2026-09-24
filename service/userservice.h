@@ -36,11 +36,18 @@ struct LoginResult
     int lockSeconds;       // 锁定状态的剩余或新产生秒数。
 };
 
+struct RegistrationResult {
+    enum Status { Success, InvalidUserName, InvalidPassword, PasswordMismatch, DuplicateUser, DatabaseError };
+    Status status = DatabaseError;
+    QString message;
+};
+
 // 登录用例服务，界面只需提交明文输入并解释 LoginResult。
 class UserService
 {
 public:
     UserService();
+    RegistrationResult registerUser(const QString &name, const QString &password, const QString &confirmation);
     // 验证输入、检查限流、查询用户并更新时间；返回完整业务结果。
     LoginResult login(const QString &userName, const QString &plainPassword);
 

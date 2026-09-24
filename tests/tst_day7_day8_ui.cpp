@@ -16,6 +16,60 @@ class Day7Day8UiTests : public QObject
     Q_OBJECT
 
 private slots:
+    void keyboardFocusWithinMultiSelectionUpdatesLinkedVideo() {
+        QTemporaryDir dir; const auto start=QDateTime::currentDateTime();
+        for(int i=0;i<2;++i) QVERIFY(insertImage(QString::number(i),dir.filePath(QString::number(i)),start.addSecs(i),100+i,i*1000)>0);
+        ImagePage page(database,dir.path());page.reload();page.show();QTest::qWait(20);
+        auto list=page.findChild<QListWidget*>("imageThumbnails");
+        QTest::mouseClick(list->viewport(),Qt::LeftButton,Qt::NoModifier,list->visualItemRect(list->item(0)).center());
+        QTest::mouseClick(list->viewport(),Qt::LeftButton,Qt::ControlModifier,list->visualItemRect(list->item(1)).center());
+        QCOMPARE(list->selectedItems().size(),2);QCOMPARE(list->currentRow(),1);
+        QTest::keyClick(list,Qt::Key_Left,Qt::ControlModifier);
+        QCOMPARE(list->selectedItems().size(),2);QCOMPARE(list->currentRow(),0);
+        QSignalSpy spy(&page,&ImagePage::playbackRequested);
+        page.findChild<QPushButton*>("playbackImageButton")->click();
+        QCOMPARE(spy.count(),1);QCOMPARE(spy[0][0].toLongLong(),qint64(101));
+    }
+
+
+    void thumbnailClickOpensTheSelectedVideo() {
+        QTemporaryDir dir;
+        QVERIFY(insertImage("linked.jpg",dir.filePath("linked.jpg"),QDateTime::currentDateTime(),23,4567)>0);
+        ImagePage page(database,dir.path());page.reload();page.show();QTest::qWait(20);
+        auto list=page.findChild<QListWidget*>("imageThumbnails");QVERIFY(list);
+        QSignalSpy spy(&page,&ImagePage::playbackRequested);
+        QTest::mouseClick(list->viewport(),Qt::LeftButton,Qt::NoModifier,list->visualItemRect(list->item(0)).center());
+        auto button=page.findChild<QPushButton*>("playbackImageButton");QVERIFY(button->isEnabled());button->click();
+        QCOMPARE(spy.count(),1);QCOMPARE(spy[0][0].toLongLong(),qint64(23));QCOMPARE(spy[0][1].toLongLong(),qint64(4567));
+    }
+    void deselectingThumbnailDisablesActionsAndCannotPlayStaleVideo() {
+        QTemporaryDir dir;
+        QVERIFY(insertImage("linked.jpg",dir.filePath("linked.jpg"),QDateTime::currentDateTime(),23,4567)>0);
+        ImagePage page(database,dir.path());page.reload();page.show();QTest::qWait(20);
+        auto list=page.findChild<QListWidget*>("imageThumbnails");
+        const auto point=list->visualItemRect(list->item(0)).center();
+        QTest::mouseClick(list->viewport(),Qt::LeftButton,Qt::NoModifier,point);
+        QTest::mouseClick(list->viewport(),Qt::LeftButton,Qt::ControlModifier,point);
+        QCOMPARE(list->selectedItems().size(),0);
+        QVERIFY(!page.findChild<QPushButton*>("deleteImageButton")->isEnabled());
+        QVERIFY(!page.findChild<QPushButton*>("exportImageButton")->isEnabled());
+        QVERIFY(!page.findChild<QPushButton*>("playbackImageButton")->isEnabled());
+        QSignalSpy spy(&page,&ImagePage::playbackRequested);page.requestSelectedPlayback();QCOMPARE(spy.count(),0);
+    }
+    void selectingSameRowAfterPageChangeUsesNewImage() {
+        QTemporaryDir dir; const auto start=QDateTime::currentDateTime();
+        for(int i=0;i<10;++i) QVERIFY(insertImage(QString::number(i),dir.filePath(QString::number(i)),start.addSecs(i),100+i,i*1000)>0);
+        ImagePage page(database,dir.path());page.reload();page.show();QTest::qWait(20);
+        auto list=page.findChild<QListWidget*>("imageThumbnails");
+        QTest::mouseClick(list->viewport(),Qt::LeftButton,Qt::NoModifier,list->visualItemRect(list->item(0)).center());
+        page.findChild<QPushButton*>("imageNextButton")->click();QTest::qWait(20);
+        QCOMPARE(list->count(),1);
+        QTest::mouseClick(list->viewport(),Qt::LeftButton,Qt::NoModifier,list->visualItemRect(list->item(0)).center());
+        auto play=page.findChild<QPushButton*>("playbackImageButton");QVERIFY(play->isEnabled());
+        QSignalSpy spy(&page,&ImagePage::playbackRequested);play->click();
+        QCOMPARE(spy.count(),1);QCOMPARE(spy[0][0].toLongLong(),qint64(100));
+    }
+
     void init();
     void cleanup();
     void imagePageLoadsNewestRowsAndPaginates();

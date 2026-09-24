@@ -11,7 +11,7 @@ private slots:
     void validatesAccountAndPasswordBoundaries();
     void locksAfterThirdFailureAndUnlocksAfterTenMinutes();
     void successfulLoginClearsFailures();
-    void guestCanOnlyAccessLivePreview();
+    void guestCannotAccessAnyMonitoringFeature();
     void sessionPreservesAndClearsAdministratorIdentity();
 };
 
@@ -72,10 +72,10 @@ void Day2AuthTests::successfulLoginClearsFailures()
     QVERIFY(!next.locked);
 }
 
-void Day2AuthTests::guestCanOnlyAccessLivePreview()
+void Day2AuthTests::guestCannotAccessAnyMonitoringFeature()
 {
     AuthSession session;
-    QVERIFY(session.canAccess(AuthPermission::LivePreview));
+    QVERIFY(!session.canAccess(AuthPermission::LivePreview));
     QVERIFY(!session.canAccess(AuthPermission::Playback));
     QVERIFY(!session.canAccess(AuthPermission::Settings));
 

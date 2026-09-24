@@ -1,7 +1,10 @@
 // 实现登录表单布局、输入检查、验证码校验和 LoginResult 到用户提示的映射。
 #include "loginwidget.h"
+#include "apptheme.h"
 #include "..\util\verifycodelabel.h"
 
+#include <QDialog>
+#include <QDialogButtonBox>
 #include <QBrush>
 #include <QCloseEvent>
 #include <QFont>
@@ -50,24 +53,28 @@ LoginWidget::LoginWidget(QWidget *parent)
     QVBoxLayout *main_layout = new QVBoxLayout(this);
     main_layout->setContentsMargins(70, 55, 70, 55);
 
-    QLabel *lab_title = new QLabel("XX系统登录窗口");
+    QLabel *lab_title = new QLabel("安防监控系统登录");
     lab_title->setObjectName("loginTitle");
     lab_title->setFont(QFont("宋体", 20, QFont::Bold));
     lab_title->setAlignment(Qt::AlignCenter);
 
-    // form_panel 是半透明的表单卡片，内部再使用垂直布局组织表单和按钮。
+    // 实色卡片同时承载标题和表单，背景照片不会干扰文字阅读。
     QFrame *form_panel = new QFrame;
     form_panel->setObjectName("formPanel");
-    form_panel->setMaximumWidth(520);
+    form_panel->setMaximumWidth(560);
     QVBoxLayout *panel_layout = new QVBoxLayout(form_panel);
     panel_layout->setContentsMargins(46, 34, 46, 34);
     panel_layout->setSpacing(18);
+    panel_layout->addWidget(lab_title);
+    panel_layout->addSpacing(8);
 
     // QFormLayout 适合“左侧标签 + 右侧输入控件”的表单结构。
     QFormLayout *form_layout = new QFormLayout;
     form_layout->setSpacing(20);
     form_layout->setLabelAlignment(Qt::AlignRight | Qt::AlignVCenter);
 
+    edit_user->setObjectName("loginUserName");
+    edit_pwd->setObjectName("loginPassword");
     edit_user->setPlaceholderText("请输入用户名");
     edit_pwd->setPlaceholderText("请输入密码");
     // Password 模式只改变界面显示，不等于对密码进行了加密。
@@ -94,7 +101,7 @@ LoginWidget::LoginWidget(QWidget *parent)
     panel_layout->addLayout(form_layout);
 
     QLabel *lab_tip = new QLabel(
-        "提示：验证码通过后，将从数据库校验用户名和密码"
+        "登录后查看画面和管理设置。后台监控按通道配置持续运行；退出程序将停止监控。"
     );
     lab_tip->setObjectName("tipLabel");
     lab_tip->setWordWrap(true);
@@ -103,7 +110,9 @@ LoginWidget::LoginWidget(QWidget *parent)
     QHBoxLayout *button_layout = new QHBoxLayout;
     QPushButton *btn_login = new QPushButton("登录");
     QPushButton *btn_reg = new QPushButton("注册");
-    QPushButton *btn_cancel = new QPushButton("取消");
+    btn_reg->setObjectName("registerButton");
+    QPushButton *btn_cancel = new QPushButton("退出程序");
+    btn_cancel->setToolTip("关闭整个程序并停止后台监控；保持登录窗口打开可持续监控");
     btn_login->setObjectName("primaryButton");
 
     button_layout->addWidget(btn_login);
@@ -112,30 +121,12 @@ LoginWidget::LoginWidget(QWidget *parent)
     panel_layout->addLayout(button_layout);
 
     main_layout->addStretch();
-    main_layout->addWidget(lab_title);
-    main_layout->addSpacing(24);
+
+
     main_layout->addWidget(form_panel, 0, Qt::AlignHCenter);
     main_layout->addStretch();
 
-    // objectName 让同一种控件能够使用不同的 QSS 样式。
-    setStyleSheet(
-        "QLabel#loginTitle { color: white; font-size: 30px; }"
-        "QFrame#formPanel { background-color: rgba(255, 255, 255, 218); "
-        "border: 1px solid rgba(255, 255, 255, 170); border-radius: 14px; }"
-        "QFrame#formPanel QLabel { color: #263238; font: 16px 'Microsoft YaHei'; }"
-        "QLineEdit { min-height: 38px; border: 1px solid #b7c1cc; "
-        "border-radius: 6px; padding: 0 10px; background-color: white; "
-        "color: #1d2732; font: 15px 'Microsoft YaHei'; }"
-        "QLineEdit:focus { border: 2px solid #3778d0; }"
-        "QPushButton { min-height: 38px; border: 1px solid #a9b4c0; "
-        "border-radius: 6px; background-color: #f4f6f8; color: #263238; "
-        "font: 15px 'Microsoft YaHei'; }"
-        "QPushButton:hover { background-color: #e2e8ef; }"
-        "QPushButton#primaryButton { color: white; background-color: #2f6fc2; "
-        "border-color: #2f6fc2; }"
-        "QPushButton#primaryButton:hover { background-color: #3d82da; }"
-        "QLabel#tipLabel { color: #56616d; font-size: 13px; }"
-    );
+    AppTheme::applyLogin(this);
 
     // 一个槽可以接收多个信号：点击登录按钮或在输入框按回车都会执行 login()。
     connect(btn_login, SIGNAL(clicked()),
@@ -159,12 +150,54 @@ LoginWidget::LoginWidget(QWidget *parent)
     // 函数指针 + Lambda 是现代 connect 写法。
     // this 是 Lambda 的上下文对象，窗口销毁后该连接会自动断开。
     connect(btn_reg, &QPushButton::clicked,
-            this, [this]() {
-        QMessageBox::information(
-            this,
-            "提示",
-            "本章示例主要演示信号和槽，注册功能暂未开放。"
-        );
+            this, [this, lab_tip]() {
+        QDialog dialog(this);
+        dialog.setObjectName("registrationDialog");
+        dialog.setWindowTitle("注册管理员账号");
+        dialog.setMinimumWidth(480);
+        AppTheme::applyLogin(&dialog);
+        auto *layout = new QVBoxLayout(&dialog);
+        auto *tip = new QLabel("账号：6-10 位字母、数字或下划线\n密码：6-8 位，不能包含空白字符", &dialog);
+        tip->setWordWrap(true);
+        layout->addWidget(tip);
+        auto *form = new QFormLayout;
+        auto *name = new QLineEdit(edit_user->text().trimmed(), &dialog);
+        auto *password = new QLineEdit(&dialog);
+        auto *confirmation = new QLineEdit(&dialog);
+        name->setObjectName("registrationName");
+        password->setObjectName("registrationPassword");
+        confirmation->setObjectName("registrationConfirmation");
+        password->setEchoMode(QLineEdit::Password);
+        confirmation->setEchoMode(QLineEdit::Password);
+        form->addRow("用户名", name);
+        form->addRow("密码", password);
+        form->addRow("确认密码", confirmation);
+        layout->addLayout(form);
+        auto *message = new QLabel(&dialog);
+        message->setObjectName("registrationMessage");
+        message->setTextFormat(Qt::PlainText);
+        message->setWordWrap(true);
+        layout->addWidget(message);
+        auto *buttons = new QDialogButtonBox(&dialog);
+        auto *submit = buttons->addButton("注册", QDialogButtonBox::AcceptRole);
+        submit->setObjectName("registrationSubmit");
+        submit->setDefault(true);
+        buttons->addButton("返回登录", QDialogButtonBox::RejectRole);
+        layout->addWidget(buttons);
+        connect(buttons, &QDialogButtonBox::rejected, &dialog, &QDialog::reject);
+        connect(buttons, &QDialogButtonBox::accepted, &dialog, [&]() {
+            const auto result = user_service.registerUser(name->text(), password->text(), confirmation->text());
+            message->setText(result.message);
+            if (result.status != RegistrationResult::Success) return;
+            edit_user->setText(name->text().trimmed());
+            edit_pwd->clear();
+            edit_vcode->clear();
+            pic_vcode->updateVerificationCode();
+            lab_tip->setText(result.message);
+            dialog.accept();
+        });
+        name->setFocus();
+        if (dialog.exec() == QDialog::Accepted) edit_pwd->setFocus();
     });
 }
 
@@ -276,7 +309,7 @@ void LoginWidget::cancel()
 
 void LoginWidget::closeEvent(QCloseEvent *event)
 {
-    // 标题栏关闭按钮与“取消”按钮采用相同的状态通知。
+    // 标题栏关闭按钮与“退出程序”按钮采用相同的状态通知。
     emit login_cancelled();
 
     // 接受关闭事件，让本次关闭继续执行。

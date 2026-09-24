@@ -40,6 +40,7 @@ SOURCES += \
     view/mywidget.cpp
 
 HEADERS += \
+    service/latestframebuffer.h \
     manager/windowmanager.h \
     model/channelconfig.h \
     model/video.h \
@@ -68,9 +69,17 @@ qnx: target.path = /tmp/$${TARGET}/bin
 else: unix:!android: target.path = /opt/$${TARGET}/bin
 !isEmpty(target.path): INSTALLS += target
 
-DESTDIR = $$PWD/bin
+isEmpty(DESTDIR): DESTDIR = $$PWD/bin
 
 win32 {
+    # 本机独立下载的 Cisco 编码库；允许工作流指定原工程的运行库位置。
+    isEmpty(OPENH264_RUNTIME_DLL): OPENH264_RUNTIME_DLL = $$PWD/bin/openh264-2.5.0-win64.dll
+    OPENH264_TARGET = $$clean_path($$absolute_path($$DESTDIR)/openh264-2.5.0-win64.dll)
+    OPENH264_SOURCE = $$clean_path($$absolute_path($$OPENH264_RUNTIME_DLL))
+    exists($$OPENH264_SOURCE):!equals(OPENH264_SOURCE, $$OPENH264_TARGET) {
+        QMAKE_POST_LINK += $$QMAKE_COPY $$shell_quote($$shell_path($$OPENH264_SOURCE)) $$shell_quote($$shell_path($$DESTDIR))
+        QMAKE_POST_LINK += $$escape_expand(\n\t)
+    }
     OPENCV_RUNTIME_DLL = E:/opencv/install/x64/mingw/bin/libopencv_world4140.dll
     OPENCV_VIDEOIO_FFMPEG_DLL = E:/opencv/install/x64/mingw/bin/opencv_videoio_ffmpeg4140_64.dll
     QMAKE_POST_LINK += $$QMAKE_COPY $$shell_path($$OPENCV_RUNTIME_DLL) $$shell_path($$DESTDIR)
@@ -80,3 +89,5 @@ win32 {
 RESOURCES += resources.qrc
 
 include($$PWD/day7_day8.pri)
+
+HEADERS += view/apptheme.h

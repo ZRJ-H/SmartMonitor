@@ -4,6 +4,7 @@
 #include <QtGlobal>
 #include <QFileInfo>
 #include <opencv2/imgproc.hpp>
+#include <vector>
 
 MonitorTask::MonitorTask(QObject *parent)
     : QObject(parent),
@@ -21,6 +22,11 @@ MonitorTask::MonitorTask(QObject *parent)
 MonitorTask::~MonitorTask()
 {
     stopCapture();
+}
+
+int MonitorTask::decoderThreadCount() const
+{
+    return capture_.isOpened() ? qRound(capture_.get(cv::CAP_PROP_N_THREADS)) : 0;
 }
 
 void MonitorTask::configureCaptureInterval(int milliseconds)
@@ -67,7 +73,7 @@ void MonitorTask::startCapture(const ChannelConfig &config)
         opened = config_.cameraIndex >= 0
                 && capture_.open(config_.cameraIndex, cv::CAP_ANY);
     } else if (!config_.filePath.trimmed().isEmpty()) {
-        opened = capture_.open(config_.filePath.toStdString(), cv::CAP_ANY);
+        opened = openFileCapture();
     }
 
     if (!opened) {
@@ -183,6 +189,14 @@ void MonitorTask::captureNextFrame()
     publishFrame(frame);
 }
 
+bool MonitorTask::openFileCapture()
+{
+    // FFmpeg 的解码线程数只能在打开时设置；首次打开和 EOF 重开共用此上限。
+    // 四路文件源不再各自按 CPU 核数建立解码线程与帧缓存。
+    return capture_.open(config_.filePath.toStdString(), cv::CAP_FFMPEG,
+                         std::vector<int>{cv::CAP_PROP_N_THREADS, 2});
+}
+
 bool MonitorTask::readNextFrame(cv::Mat &frame)
 {
     if (config_.sourceType == ChannelSourceType::Camera)
@@ -195,7 +209,12 @@ bool MonitorTask::readNextFrame(cv::Mat &frame)
         if (capture_.grab()) continue;
         // 文件结束后回到第一帧，实现持续循环预览。
         capture_.set(cv::CAP_PROP_POS_FRAMES, 0);
-        if (!capture_.grab()) return false;
+        if (!capture_.grab()) {
+            // 部分短文件后端无法从 EOF seek 回首帧，重新打开该文件后重试一次。
+            // 仅处理文件源，不重启摄像头，也不无限循环掩盖损坏文件。
+            if (!openFileCapture()
+                    || !capture_.grab()) return false;
+        }
     }
     return capture_.retrieve(frame) && !frame.empty();
 }

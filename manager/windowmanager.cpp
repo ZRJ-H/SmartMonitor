@@ -46,6 +46,10 @@ WindowManager::~WindowManager()
 
 void WindowManager::showMainWindow()
 {
+    if (!main_widget->isLoggedIn()) {
+        showLoginWindow();
+        return;
+    }
     main_widget->show();
     main_widget->raise();
     main_widget->activateWindow();
@@ -69,5 +73,5 @@ void WindowManager::onLoginSuccess(int userId, const QString &userName)
 void WindowManager::onLoginCancelled()
 {
     login_widget->hide();
-    showMainWindow();
+    QApplication::quit();
 }

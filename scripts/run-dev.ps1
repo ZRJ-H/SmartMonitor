@@ -5,6 +5,7 @@ param([switch]$NoBuild,[switch]$NoCapture,
 $ErrorActionPreference='Stop'
 $root=Split-Path $PSScriptRoot -Parent
 if(!$NoBuild){& "$PSScriptRoot/build-and-test.ps1" -Projects day15_pro.pro -QtRoot $QtRoot -MinGWRoot $MinGWRoot -OpenCVBin $OpenCVBin}
+& "$PSScriptRoot/deploy-runtime.ps1" -OutputDir "$root/.workflow/build/day15_pro/bin" -QtRoot $QtRoot -MinGWRoot $MinGWRoot -OpenCVBin $OpenCVBin -CleanStart
 $oldPath=$env:PATH;$oldPlugins=$env:QT_PLUGIN_PATH;$oldAuto=$env:SMART_MONITOR_AUTOSTART
 try{
     $env:PATH="$root/bin;$MinGWRoot/bin;$QtRoot/bin;$OpenCVBin;$oldPath"

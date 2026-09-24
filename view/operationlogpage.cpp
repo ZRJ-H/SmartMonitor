@@ -11,6 +11,15 @@
 #include <QHBoxLayout>
 #include <QTabWidget>
 #include <QComboBox>
+#include <QApplication>
+#include <QClipboard>
+#include <QDialog>
+#include <QDialogButtonBox>
+#include <QFormLayout>
+#include <QPlainTextEdit>
+#include <QShortcut>
+#include <QHideEvent>
+
 OperationLogPage::OperationLogPage(const QSqlDatabase &db,QWidget *parent):QWidget(parent),service(db) {
     setObjectName("operationLogPage");
     auto root=new QVBoxLayout(this);auto filters=new QHBoxLayout;
@@ -37,7 +46,23 @@ OperationLogPage::OperationLogPage(const QSqlDatabase &db,QWidget *parent):QWidg
     auto actions=new QHBoxLayout;auto previous=new QPushButton("上一页");auto next=new QPushButton("下一页");
     auto remove=new QPushButton("删除时间范围内的日志");
     auto removeSelected=new QPushButton("删除所选日志");auto images=new QPushButton("关联图片");auto play=new QPushButton("关联录像");
+    detailsButton=new QPushButton("查看详情");
+    detailsButton->setObjectName("viewLogDetailsButton");
+    detailsButton->setEnabled(false);
+    actions->addWidget(detailsButton);
     actions->addWidget(removeSelected);actions->addWidget(images);actions->addWidget(play);
+    connect(detailsButton,&QPushButton::clicked,this,&OperationLogPage::showSelectedDetails);
+    connect(table,&QTableWidget::itemSelectionChanged,this,&OperationLogPage::updateDetailsAction);
+    connect(table,&QTableWidget::currentCellChanged,this,&OperationLogPage::updateDetailsAction);
+    connect(table,&QTableWidget::cellDoubleClicked,this,[this](int row,int column){
+        table->setCurrentCell(row,column);
+        showSelectedDetails();
+    });
+    for (const auto key : {Qt::Key_Return, Qt::Key_Enter}) {
+        auto shortcut=new QShortcut(QKeySequence(key),table);
+        shortcut->setContext(Qt::WidgetWithChildrenShortcut);
+        connect(shortcut,&QShortcut::activated,this,&OperationLogPage::showSelectedDetails);
+    }
     connect(tabs,&QTabWidget::currentChanged,this,[this,remove,removeSelected](int index){
         remove->setEnabled(index==0);removeSelected->setEnabled(index==0);page=1;reload();
     });
@@ -66,6 +91,10 @@ OperationLogPage::OperationLogPage(const QSqlDatabase &db,QWidget *parent):QWidg
     });
 }
 void OperationLogPage::reload() {
+    if(detailsDialog)detailsDialog->close();
+    table->clearSelection();
+    table->setCurrentCell(-1,-1);
+    updateDetailsAction();
     if(tabs->currentIndex()==1){
         QString error;
         if(!service.queryEvents(channel->currentData().toInt(),from->dateTime(),to->dateTime(),page,50,currentEvents,error)){
@@ -85,6 +114,78 @@ void OperationLogPage::reload() {
     for(int i=0;i<rows.size();++i){
         const auto &entry=rows[i];QStringList values={QString::number(entry.id),entry.operationTime.toString("yyyy-MM-dd HH:mm:ss"),QString::number(entry.adminId),entry.operationFunc,entry.operationDesc};
         for(int c=0;c<values.size();++c)table->setItem(i,c,new QTableWidgetItem(values[c]));
+        table->item(i,4)->setToolTip("双击日志行查看完整详情，也可选中后点击“查看详情”");
     }
     status->setText(QString("第 %1 页，%2 条").arg(page).arg(rows.size()));
+}
+
+void OperationLogPage::updateDetailsAction()
+{
+    if(!detailsButton)return;
+    const auto item=table->item(table->currentRow(),0);
+    detailsButton->setEnabled(isEnabled() && tabs->currentIndex()==0 && item && item->isSelected());
+}
+
+void OperationLogPage::showSelectedDetails()
+{
+    updateDetailsAction();
+    if(!detailsButton->isEnabled())return;
+    if(detailsDialog && detailsDialog->isVisible()) {
+        detailsDialog->raise();detailsDialog->activateWindow();return;
+    }
+    const int row=table->currentRow();
+    const QString description=table->item(row,4)->text();
+    auto dialog=new QDialog(this);
+    detailsDialog=dialog;
+    dialog->setObjectName("operationLogDetailsDialog");
+    dialog->setWindowTitle("操作日志详情");
+    dialog->setAttribute(Qt::WA_DeleteOnClose);
+    dialog->resize(760,500);
+    dialog->setMinimumSize(520,360);
+    auto layout=new QVBoxLayout(dialog);
+    layout->setContentsMargins(20,20,20,20);
+    layout->setSpacing(12);
+    auto metadata=new QFormLayout;
+    const QStringList names={"operationLogId","operationLogTime","operationLogAdmin","operationLogFunction"};
+    for(int column=0;column<4;++column) {
+        auto value=new QLabel(table->item(row,column)->text());
+        value->setObjectName(names[column]);
+        value->setTextFormat(Qt::PlainText);
+        value->setTextInteractionFlags(Qt::TextSelectableByMouse|Qt::TextSelectableByKeyboard);
+        value->setWordWrap(true);
+        metadata->addRow(table->horizontalHeaderItem(column)->text()+"：",value);
+    }
+    layout->addLayout(metadata);
+    layout->addWidget(new QLabel("完整详情："));
+    auto text=new QPlainTextEdit;
+    text->setObjectName("operationLogDetailsText");
+    text->setReadOnly(true);
+    text->setPlainText(description);
+    text->setPlaceholderText("这条日志没有附加详情");
+    text->setWordWrapMode(QTextOption::WrapAtWordBoundaryOrAnywhere);
+    layout->addWidget(text,1);
+    auto buttons=new QDialogButtonBox(QDialogButtonBox::Close);
+    buttons->button(QDialogButtonBox::Close)->setText("关闭");
+    auto copy=buttons->addButton("复制详情",QDialogButtonBox::ActionRole);
+    copy->setObjectName("copyLogDetailsButton");
+    copy->setEnabled(!description.isEmpty());
+    connect(copy,&QPushButton::clicked,dialog,[description]{QApplication::clipboard()->setText(description);});
+    connect(buttons,&QDialogButtonBox::rejected,dialog,&QDialog::reject);
+    layout->addWidget(buttons);
+    dialog->open();
+}
+
+void OperationLogPage::changeEvent(QEvent *event)
+{
+    QWidget::changeEvent(event);
+    if(event->type()==QEvent::EnabledChange) {
+        if(!isEnabled() && detailsDialog)detailsDialog->close();
+        updateDetailsAction();
+    }
+}
+
+void OperationLogPage::hideEvent(QHideEvent *event)
+{
+    if(detailsDialog)detailsDialog->close();
+    QWidget::hideEvent(event);
 }

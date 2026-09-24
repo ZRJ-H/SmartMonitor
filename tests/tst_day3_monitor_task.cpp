@@ -15,6 +15,64 @@ class Day3MonitorTaskTests : public QObject
     Q_OBJECT
 
 private slots:
+    void fileDecoderThreadsStayBoundedAcrossLoopAndRestart() {
+        QTemporaryDir dir;
+        QVERIFY(dir.isValid());
+        const QString path = dir.filePath("bounded-single.mp4");
+        cv::VideoWriter writer(path.toStdString(), cv::VideoWriter::fourcc('m','p','4','v'),
+                               20, cv::Size(64,48));
+        QVERIFY2(writer.isOpened(), "MP4 videoio backend is unavailable");
+        writer.write(cv::Mat(48,64,CV_8UC3,cv::Scalar(20,40,80)));
+        writer.release();
+
+        ChannelConfig config;
+        config.channelId=1;config.name="bounded decoder";
+        config.sourceType=ChannelSourceType::File;config.filePath=path;
+        MonitorTask task;
+        QSignalSpy frames(&task,&MonitorTask::frameReady);
+        QSignalSpy errors(&task,&MonitorTask::errorOccurred);
+        QList<int> reportedThreads;
+        connect(&task,&MonitorTask::frameReady,this,[&]() {
+            reportedThreads.append(task.decoderThreadCount());
+        });
+        task.startCapture(config);
+        QCOMPARE(task.decoderThreadCount(),2);
+        // A single-frame file must cross EOF repeatedly without restoring the default pool.
+        QTRY_VERIFY_WITH_TIMEOUT(frames.count()>=5,2000);
+        for(int threads:reportedThreads) QCOMPARE(threads,2);
+        QCOMPARE(errors.count(),0);
+        task.stopCapture();
+        QCOMPARE(task.decoderThreadCount(),0);
+        const int beforeRestart=frames.count();
+        task.startCapture(config);
+        QCOMPARE(task.decoderThreadCount(),2);
+        QTRY_VERIFY_WITH_TIMEOUT(frames.count()>beforeRestart,1000);
+        QCOMPARE(errors.count(),0);
+        task.stopCapture();
+    }
+    void singleFrameVideoLoopsWithoutStoppingChannel() {
+        QTemporaryDir dir;const auto path=dir.filePath("single.avi");
+        cv::VideoWriter writer(path.toStdString(),cv::VideoWriter::fourcc('M','J','P','G'),20,cv::Size(32,24));
+        QVERIFY(writer.isOpened());writer.write(cv::Mat(24,32,CV_8UC3,cv::Scalar(20,40,80)));writer.release();
+        ChannelConfig config;config.channelId=1;config.name="single";config.sourceType=ChannelSourceType::File;config.filePath=path;
+        MonitorTask task;QSignalSpy frames(&task,&MonitorTask::frameReady);QSignalSpy errors(&task,&MonitorTask::errorOccurred);
+        task.startCapture(config);QTRY_VERIFY_WITH_TIMEOUT(frames.count()>=3,1000);
+        QCOMPARE(errors.count(),0);task.stopCapture();
+    }
+
+    void invalidModelKeepsPreviewAliveAndStopPreventsNewFrames() {
+        QTemporaryDir dir;const auto path=dir.filePath("preview.avi");
+        cv::VideoWriter writer(path.toStdString(),cv::VideoWriter::fourcc('M','J','P','G'),20,cv::Size(32,24));
+        QVERIFY(writer.isOpened());for(int i=0;i<3;++i) writer.write(cv::Mat(24,32,CV_8UC3,cv::Scalar(20,40,80)));writer.release();
+        ChannelConfig config;config.channelId=1;config.name="test";config.sourceType=ChannelSourceType::File;config.filePath=path;
+        MonitorTask task;QSignalSpy frames(&task,&MonitorTask::frameReady);QSignalSpy messages(&task,&MonitorTask::detectionMessage);
+        QSignalSpy errors(&task,&MonitorTask::errorOccurred); task.startCapture(config);task.configureDetection(true,dir.filePath("missing.onnx"),0.5);
+        QCOMPARE(messages.count(),1);QVERIFY(messages[0][1].toString().contains(QString::fromUtf8("不存在")));
+        QTRY_VERIFY_WITH_TIMEOUT(frames.count()>=2,1000);
+        QCOMPARE(errors.count(),0);task.stopCapture();const int stopped=frames.count();QTest::qWait(200);QCOMPARE(frames.count(),stopped);
+        task.startCapture(config);QTRY_VERIFY_WITH_TIMEOUT(frames.count()>stopped,1000);task.stopCapture();
+    }
+
     // 验证本地视频到达末帧后会回到开头继续发送画面。
     void fileSourceLoopsAfterLastFrame();
     void mp4FileSourceCanBeOpened();

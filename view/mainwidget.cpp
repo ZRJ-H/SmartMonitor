@@ -1,5 +1,7 @@
 // 实现主窗口布局、权限控制、录像分页、通道配置以及四路视频采集线程与画面显示。
 #include "mainwidget.h"
+#include "apptheme.h"
+#include <QSignalBlocker>
 #include <QStandardPaths>
 #include <QSettings>
 #include "../service/backupservice.h"
@@ -37,7 +39,7 @@
 #include <QFileInfo>
 #include <QLoggingCategory>
 #include <QStorageInfo>
-#include <QEventLoop>
+#include <QScrollArea>
 #include <QFileDialog>
 #include <QFrame>
 #include <QGridLayout>
@@ -56,7 +58,27 @@
 #include <QTimer>
 #include <QVBoxLayout>
 
-#include <opencv2/imgproc.hpp>
+// 包装不可变 OpenCV 像素；调用方保留 Mat 引用直到 QImage 消费结束。
+namespace {
+QImage frameImage(const cv::Mat &frame)
+{
+    if (frame.empty() || frame.depth() != CV_8U) return {};
+    QImage::Format format;
+    switch (frame.channels()) {
+    case 1: format = QImage::Format_Grayscale8; break;
+    case 3: format = QImage::Format_BGR888; break;
+    case 4: format = QImage::Format_ARGB32; break; // Windows BGRA 字节顺序
+    default: return {};
+    }
+    // QImage/QPixmap 在同尺寸时可能共享像素；让最后一个图像引用负责释放 Mat。
+    // 使用 const 数据构造也保证 Qt 如需写入会自行分离。
+    auto *pixels = new cv::Mat(frame);
+    return QImage(static_cast<const uchar*>(pixels->data), pixels->cols, pixels->rows,
+                  static_cast<qsizetype>(pixels->step), format,
+                  [](void *owner) { delete static_cast<cv::Mat*>(owner); }, pixels);
+}
+}
+
 
 MainWidget::MainWidget(QWidget *parent)
     : QWidget(parent),
@@ -141,18 +163,22 @@ MainWidget::MainWidget(QWidget *parent)
     init_style();
     init_connect();
     init_showtime();
-    init_workers();
     load_system_settings();
     load_channel_configs();
     refresh_camera_devices();
     apply_channel_configs_to_ui();
     init_management_pages();
+    for (auto window : video_windows) window->setText("请先登录");
+    // 监控随进程启动，不能以是否有人登录决定是否留存录像。
+    init_workers();
     if (qEnvironmentVariable("SMART_MONITOR_AUTOSTART", "1") != "0")
         QTimer::singleShot(0, this, &MainWidget::start_configured_previews);
 }
 
 MainWidget::~MainWidget()
 {
+    preview_delivery_enabled_.store(false);
+    auth_session.logout();
     shutdown_workers();
 }
 
@@ -306,10 +332,12 @@ void MainWidget::init_ui()
 
     btn_one = new QPushButton("单画面");
     btn_four = new QPushButton("四画面");
-    btn_start_preview = new QPushButton("启动预览");
-    btn_stop_preview = new QPushButton("停止预览");
+    btn_start_preview = new QPushButton("启动通道");
+    btn_stop_preview = new QPushButton("停止通道");
     btn_start_preview->setObjectName("startPreviewButton");
     btn_stop_preview->setObjectName("stopPreviewButton");
+    btn_start_preview->setToolTip("启动所选通道的采集、录像及已启用的检测");
+    btn_stop_preview->setToolTip("停止所选通道的采集、录像和检测；退出登录不会停止通道");
 
     const QList<QPushButton *> control_buttons = {
         btn_one, btn_four, btn_start_preview, btn_stop_preview
@@ -462,6 +490,7 @@ void MainWidget::init_ui()
     QVBoxLayout *setting_card_layout = new QVBoxLayout(setting_card);
     setting_card_layout->setContentsMargins(28, 24, 28, 24);
     setting_card_layout->setSpacing(18);
+    setting_card_layout->setSizeConstraint(QLayout::SetMinimumSize);
 
     QLabel *setting_hint = new QLabel(
         "配置四个通道的名称和视频来源。摄像头不能被多个通道重复占用。"
@@ -536,7 +565,7 @@ void MainWidget::init_ui()
     recording_grid->addWidget(browse_record_directory, 0, 2);
     recording_grid->addWidget(new QLabel("分段时长"), 1, 0);
     recording_grid->addWidget(record_segment_seconds_, 1, 1);
-    detection_enabled_box_ = new QCheckBox("启用单画面人形检测");
+    detection_enabled_box_ = new QCheckBox("启用后台人形检测（所有通道）");
     yolo_model_edit_ = new QLineEdit;
     yolo_model_edit_->setPlaceholderText("选择 YOLO ONNX 模型");
     QPushButton *browse_yolo_model = new QPushButton("浏览模型");
@@ -560,8 +589,8 @@ void MainWidget::init_ui()
     QHBoxLayout *feature_save_layout = new QHBoxLayout;
     btn_save_recording_settings = new QPushButton("保存录像设置");
     btn_save_detection_settings = new QPushButton("保存检测设置");
-    btn_save_recording_settings->setObjectName("saveChannelConfigButton");
-    btn_save_detection_settings->setObjectName("saveChannelConfigButton");
+    btn_save_recording_settings->setObjectName("saveRecordingSettingsButton");
+    btn_save_detection_settings->setObjectName("saveDetectionSettingsButton");
     feature_save_layout->addWidget(btn_save_recording_settings);
     feature_save_layout->addWidget(btn_save_detection_settings);
     feature_save_layout->addStretch();
@@ -577,7 +606,13 @@ void MainWidget::init_ui()
     setting_card_layout->addWidget(btn_save_channel_configs,
                                    0, Qt::AlignRight);
     setting_card_layout->addStretch();
-    setting_layout->addWidget(setting_card, 1);
+    // 设置项较多，小窗口应滚动而不是把输入框和文字压扁。
+    auto setting_scroll = new QScrollArea;
+    setting_scroll->setObjectName("settingsScrollArea");
+    setting_scroll->setWidgetResizable(true);
+    setting_scroll->setFrameShape(QFrame::NoFrame);
+    setting_scroll->setWidget(setting_card);
+    setting_layout->addWidget(setting_scroll, 1);
 
     // addWidget() 的顺序决定索引：监控=0、回放=1、设置=2。
     page_stack->addWidget(monitor_page);
@@ -588,63 +623,7 @@ void MainWidget::init_ui()
 
 void MainWidget::init_style()
 {
-    // QSS 的 #名称会匹配控件的 objectName，例如 QLabel#timeLabel。
-    setStyleSheet(
-        "QWidget#mainWidget { background-color: #20242a; color: #d7d9dc; }"
-        "QFrame#topBar { background-color: #252a31; border-bottom: 1px solid #3b414a; }"
-        "QLabel#titleLabel { color: #d7d9dc; font: 30px 'Microsoft YaHei'; }"
-        "QPushButton#navButton { color: #c7cbd1; background-color: #0f1115; "
-        "border: 1px solid #343a43; border-radius: 8px; font: 16px 'Microsoft YaHei'; }"
-        "QPushButton#navButton:hover { background-color: #353b45; }"
-        "QPushButton#navButton:checked { color: white; border: 1px solid #3b82f6; "
-        "background-color: #1f4f96; }"
-        "QLabel#timeLabel { color: #d7d9dc; font: 18px Consolas; }"
-        "QPushButton#loginButton { color: white; background-color: #2042a5; "
-        "border: 2px solid #375bd0; border-radius: 33px; font: bold 15px 'Microsoft YaHei'; }"
-        "QPushButton#loginButton:hover { background-color: #3158d5; }"
-        "QLabel#loginLabel { color: #bfc3ca; font: 14px 'Microsoft YaHei'; }"
-        "QStackedWidget#pageStack { background-color: #20242a; }"
-        "QFrame#contentArea, QFrame#playbackPage, QFrame#settingPage { background-color: #20242a; }"
-        "QFrame#devicePanel, QFrame#pageCard { background-color: #292e36; "
-        "border: 1px solid #3a4049; border-radius: 6px; }"
-        "QLabel#pageTitle { color: #f0f1f3; font: 26px 'Microsoft YaHei'; }"
-        "QLabel#sectionTitle { color: #f0f1f3; font: 21px 'Microsoft YaHei'; }"
-        "QLabel#settingText { color: #d5d8dd; font: 16px 'Microsoft YaHei'; }"
-        "QFrame#separator { color: #777d86; background-color: #777d86; max-height: 1px; }"
-        "QListWidget#deviceList, QListWidget#recordList { background: transparent; border: none; "
-        "color: #cdd0d5; font: 16px 'Microsoft YaHei'; outline: none; }"
-        "QListWidget#deviceList::item, QListWidget#recordList::item { height: 40px; padding-left: 8px; }"
-        "QListWidget#deviceList::item:hover, QListWidget#recordList::item:hover { "
-        "background-color: #353c46; border-radius: 4px; }"
-        "QListWidget#deviceList::item:selected, QListWidget#recordList::item:selected { "
-        "background-color: #3158a8; color: white; }"
-        "QPushButton#videoRecordRefreshButton, QPushButton#refreshCamerasButton, "
-        "QPushButton#saveChannelConfigButton { color: white; background-color: #3158a8; "
-        "border: 1px solid #4775c5; border-radius: 5px; padding: 4px 14px; "
-        "font: 14px 'Microsoft YaHei'; }"
-        "QPushButton#videoRecordRefreshButton:hover, QPushButton#refreshCamerasButton:hover, "
-        "QPushButton#saveChannelConfigButton:hover { background-color: #3b6bc3; }"
-        "QTableView#videoRecordTable { background-color: #20252c; alternate-background-color: #292f38; "
-        "color: #d7d9dc; gridline-color: #424a55; border: 1px solid #424a55; "
-        "selection-background-color: #3158a8; selection-color: white; }"
-        "QTableView#videoRecordTable QHeaderView::section { background-color: #343b45; "
-        "color: #f0f1f3; border: none; border-right: 1px solid #4a535f; "
-        "padding: 7px; font: 14px 'Microsoft YaHei'; }"
-        "QFrame#monitorPanel { background-color: #292e36; border: 1px solid #3a4049; "
-        "border-radius: 6px; }"
-        "QFrame#videoArea { background-color: #11151a; }"
-        "QLabel#videoWindow, QLabel#playbackWindow { background-color: #090b0e; color: #aeb3ba; "
-        "font: 20px 'Microsoft YaHei'; border: 1px solid #343b45; }"
-        "QLineEdit, QComboBox { color: #e1e4e8; background-color: #15191e; "
-        "border: 1px solid #414852; border-radius: 4px; padding: 5px; }"
-        "QPushButton#controlButton, QPushButton#startPreviewButton, "
-        "QPushButton#stopPreviewButton { color: #d5d8dd; background-color: #15191e; "
-        "border: 1px solid #414852; border-radius: 5px; padding: 5px 16px; "
-        "font: 14px 'Microsoft YaHei'; }"
-        "QPushButton#controlButton:hover, QPushButton#startPreviewButton:hover, "
-        "QPushButton#stopPreviewButton:hover { color: white; background-color: #344052; }"
-        "QPushButton#controlButton:checked { color: white; background-color: #3158a8; }"
-    );
+    AppTheme::applyMain(this);
 }
 
 void MainWidget::init_connect()
@@ -696,7 +675,7 @@ void MainWidget::init_connect()
     connect(btn_save_detection_settings, &QPushButton::clicked,
             this, &MainWidget::save_detection_settings);
 
-    connect(device_list, &QListWidget::itemClicked,
+    connect(device_list, &QListWidget::currentItemChanged,
             this, &MainWidget::select_channel);
     connect(btn_start_preview, &QPushButton::clicked,
             this, &MainWidget::start_selected_preview);
@@ -767,11 +746,17 @@ void MainWidget::handle_login_button()
 
 void MainWidget::setLoggedInUser(int userId, const QString &userName)
 {
+    if (userId < 1 || userName.trimmed().isEmpty()) return;
     auth_session.login(userId, userName);
+    preview_delivery_enabled_.store(true);
     update_management_access();
     audit("登录","管理员登录成功");
     lab_login->setText(userName);
     btn_login->setText("退出");
+    for (int i = 0; i < 4; ++i) {
+        video_windows[i]->setText(QStringLiteral("%1\n%2").arg(channel_configs_.at(i).name,
+            preview_running_[i] ? "正在接收画面" : "通道未启动"));
+    }
 
     // 登录通过后从第一页加载视频文件。
     current_video_page = 1;
@@ -890,7 +875,7 @@ bool MainWidget::require_permission(AuthPermission permission,
     QMessageBox::information(
         this,
         "需要登录",
-        QString("请先登录，再%1。未登录状态仅允许查看实时画面。")
+        QString("请先登录，再%1。登录后才能查看监控画面或进行操作。")
             .arg(actionName)
     );
     return false;
@@ -899,6 +884,7 @@ bool MainWidget::require_permission(AuthPermission permission,
 void MainWidget::logout()
 {
     audit("退出","管理员退出");
+    preview_delivery_enabled_.store(false);
     auth_session.logout();
     update_management_access();
     playback_player_->stop();
@@ -912,7 +898,14 @@ void MainWidget::logout()
     btn_login->setText("登录");
     btn_monitor_page->setChecked(true);
     page_stack->setCurrentIndex(0);
-    QMessageBox::information(this, "退出登录", "已退出，当前为访客模式。");
+    for (int i = 0; i < 4; ++i) {
+        latest_source_frames_[i].release();
+        video_windows[i]->clear();
+        video_windows[i]->setText("请先登录");
+    }
+    // 只锁定客户端界面；后台录像与检测事件不能被注销截断。
+    emit login_requested();
+    refresh_channel_list();
 }
 
 void MainWidget::load_previous_video_page()
@@ -935,7 +928,6 @@ void MainWidget::update_time()
 void MainWidget::show_single_window()
 {
     single_mode_=true;
-    apply_detection_mode();
     video_layout->setRowStretch(0, 1);
     video_layout->setRowStretch(1, 0);
     video_layout->setColumnStretch(0, 1);
@@ -953,7 +945,6 @@ void MainWidget::show_single_window()
 void MainWidget::show_multi_window()
 {
     single_mode_=false;
-    apply_detection_mode();
     video_layout->setRowStretch(0, 1);
     video_layout->setRowStretch(1, 1);
     video_layout->setColumnStretch(0, 1);
@@ -968,6 +959,7 @@ void MainWidget::show_multi_window()
 
 void MainWidget::init_workers()
 {
+    if (monitor_threads_[0] || shutting_down_workers_) return;
     // cv::Mat 需要注册后才能作为参数通过 Qt 的跨线程队列信号传递。
     qRegisterMetaType<QList<QImage>>();
     qRegisterMetaType<QList<qint64>>();
@@ -985,11 +977,29 @@ void MainWidget::init_workers()
                 monitor_tasks_[i], &QObject::deleteLater);
         connect(record_threads_[i], &QThread::finished,
                 record_tasks_[i], &QObject::deleteLater);
-        // 强制使用队列连接：采集在线程中执行，界面更新始终回到主线程。
-        connect(monitor_tasks_[i], &MonitorTask::frameReady,
-                this, &MainWidget::display_frame, Qt::QueuedConnection);
-        connect(monitor_tasks_[i], &MonitorTask::frameReady,
-                record_tasks_[i], &RecordTask::saveFrame, Qt::QueuedConnection);
+        // 每个消费者最多排队一条通知；慢消费者取最新帧，避免积压全尺寸图像。
+        // DirectConnection 仅访问带锁邮箱，GUI/录像仍在各自线程消费。
+        connect(monitor_tasks_[i], &MonitorTask::frameReady, this,
+                [this, i](const cv::Mat &frame, int) {
+            // 未登录时不向 GUI 排队图像，录像消费者仍正常接收帧。
+            if (!preview_delivery_enabled_.load()) return;
+            if (preview_mailboxes_[i].publish(frame)) {
+                QMetaObject::invokeMethod(this, [this, i] {
+                    const cv::Mat latest = preview_mailboxes_[i].take();
+                    if (!latest.empty()) display_frame(latest, i + 1);
+                }, Qt::QueuedConnection);
+            }
+        }, Qt::DirectConnection);
+        auto recorder = record_tasks_[i];
+        connect(monitor_tasks_[i], &MonitorTask::frameReady, recorder,
+                [this, i, recorder](const cv::Mat &frame, int) {
+            if (recording_mailboxes_[i].publish(frame)) {
+                QMetaObject::invokeMethod(recorder, [this, i, recorder] {
+                    const cv::Mat latest = recording_mailboxes_[i].take();
+                    if (!latest.empty()) recorder->saveFrame(latest, i + 1);
+                }, Qt::QueuedConnection);
+            }
+        }, Qt::DirectConnection);
         connect(monitor_tasks_[i], &MonitorTask::sourceReady,
                 this, &MainWidget::on_source_ready, Qt::QueuedConnection);
         connect(monitor_tasks_[i], &MonitorTask::captureStateChanged,
@@ -1027,6 +1037,8 @@ void MainWidget::init_workers()
 
 void MainWidget::shutdown_workers()
 {
+    if (shutting_down_workers_) return;
+    shutting_down_workers_ = true;
     // 先同步停止采集并释放设备，再退出线程，避免对象销毁时仍在读取帧。
     for (int i = 0; i < 4; ++i) {
         if (monitor_tasks_[i] && monitor_threads_[i]
@@ -1046,13 +1058,24 @@ void MainWidget::shutdown_workers()
             QMetaObject::invokeMethod(record_tasks_[i], "stop", Qt::BlockingQueuedConnection);
     }
     // stop() 发出的最后一个 segmentSaved 是排队信号；对象销毁前让主线程完成入库。
-    QCoreApplication::processEvents(QEventLoop::AllEvents);
+    QCoreApplication::sendPostedEvents(this, QEvent::MetaCall);
     for (int i = 0; i < 4; ++i) {
         if (record_threads_[i] && record_threads_[i]->isRunning()) {
             record_threads_[i]->quit();
             record_threads_[i]->wait();
         }
+        monitor_tasks_[i] = nullptr;
+        record_tasks_[i] = nullptr;
+        delete monitor_threads_[i]; monitor_threads_[i] = nullptr;
+        delete record_threads_[i]; record_threads_[i] = nullptr;
+        preview_mailboxes_[i].clear();
+        recording_mailboxes_[i].clear();
+        latest_source_frames_[i].release();
+        preview_running_[i] = false;
+        active_record_paths_[i].clear();
+        pending_event_keys_[i].clear();
     }
+    shutting_down_workers_ = false;
 }
 
 void MainWidget::load_channel_configs()
@@ -1168,12 +1191,13 @@ void MainWidget::save_detection_settings()
     detection_confidence_value_ = confidence;
     apply_detection_mode();
     audit("修改配置", "智能检测设置");
-    QMessageBox::information(this, "智能检测", enabled ? "单画面下所选通道的人形检测已启用。" : "智能检测已关闭，预览与普通录像保持运行。");
+    QMessageBox::information(this, "智能检测", enabled ? "已为配置的通道启用后台人形检测，退出登录后继续运行。" : "智能检测已关闭，预览与普通录像保持运行。");
 }
 
 void MainWidget::on_source_ready(int channelId, double fps)
 {
-    if (channelId < 1 || channelId > 4) return;
+    if (shutting_down_workers_ || channelId < 1 || channelId > 4) return;
+    if (!record_tasks_[channelId - 1]) return;
     RecordTask *task = record_tasks_[channelId - 1];
     const QString directory = record_directory_;
     const int seconds = record_segment_seconds_value_;
@@ -1215,8 +1239,9 @@ void MainWidget::on_segment_started(int channelId, const QString &path)
 void MainWidget::on_person_detected(int channelId,const QString &eventKey,const QDateTime &eventTime,double confidence)
 {
     Q_UNUSED(eventTime);
-    if(!single_mode_||channelId!=selected_channel_||channelId<1||channelId>4)return;
+    if(shutting_down_workers_ || !detection_enabled_value_ || channelId<1 || channelId>4)return;
     auto task=record_tasks_[channelId-1];
+    if(!task)return;
     QMetaObject::invokeMethod(task,[task,eventKey,confidence]{task->beginEvent(eventKey,confidence);},Qt::QueuedConnection);
 }
 
@@ -1267,6 +1292,8 @@ QList<ChannelConfig> MainWidget::collect_channel_configs_from_ui() const
 
 void MainWidget::refresh_channel_list()
 {
+    // 刷新运行状态不属于用户换通道，避免重载当前 YOLO 并重置事件状态。
+    const QSignalBlocker selectionBlocker(device_list);
     const int previousRow = device_list->currentRow();
     device_list->clear();
     for (int i = 0; i < channel_configs_.size(); ++i) {
@@ -1373,20 +1400,25 @@ void MainWidget::select_channel(QListWidgetItem *item)
     }
     selected_channel_ = row + 1;
     lab_video_hint = video_windows[row];
+    // 选择只改变显示布局，不重载模型或重置后台检测状态。
+    if (single_mode_) show_single_window();
 }
 
 void MainWidget::start_selected_preview()
 {
+    if (!auth_session.isLoggedIn()) return;
     start_channel(selected_channel_ - 1);
 }
 
 void MainWidget::stop_selected_preview()
 {
+    if (!auth_session.isLoggedIn()) return;
     stop_channel(selected_channel_ - 1);
 }
 
 void MainWidget::start_configured_previews()
 {
+    if (shutting_down_workers_) return;
     // 各通道分别校验和启动；一个通道未配置不会影响其他通道。
     for (int i = 0; i < channel_configs_.size(); ++i) {
         QString errorText;
@@ -1403,6 +1435,7 @@ void MainWidget::start_configured_previews()
 
 void MainWidget::start_channel(int index)
 {
+    if (shutting_down_workers_) return;
     if (index < 0 || index >= channel_configs_.size()) {
         return;
     }
@@ -1416,6 +1449,7 @@ void MainWidget::start_channel(int index)
     video_windows[index]->setText(
                 QStringLiteral("%1\n正在连接...").arg(config.name));
     MonitorTask *task = monitor_tasks_[index];
+    if (!task) return;
     // 排队到对应工作线程执行，主线程只负责发起请求而不会阻塞。
     QMetaObject::invokeMethod(
         task,
@@ -1424,7 +1458,7 @@ void MainWidget::start_channel(int index)
             task->startCapture(config);
         },
         Qt::QueuedConnection);
-    const bool detectionEnabled = detection_enabled_value_ && single_mode_ && index == selected_channel_-1;
+    const bool detectionEnabled = detection_enabled_value_;
     const QString modelPath = yolo_model_path_;
     const double confidence = detection_confidence_value_;
     QMetaObject::invokeMethod(task,
@@ -1447,30 +1481,18 @@ void MainWidget::stop_channel(int index)
 
 void MainWidget::display_frame(const cv::Mat &frame, int channelId)
 {
-    if (channelId < 1 || channelId > 4 || frame.empty()) {
-        return;
-    }
-
-    // OpenCV 默认是 BGR/BGRA，显示前转换成 QImage 使用的 RGB/RGBA。
-    cv::Mat rgb;
-    if (frame.channels() == 3) {
-        cv::cvtColor(frame, rgb, cv::COLOR_BGR2RGB);
-    } else if (frame.channels() == 4) {
-        cv::cvtColor(frame, rgb, cv::COLOR_BGRA2RGBA);
-    } else {
-        cv::cvtColor(frame, rgb, cv::COLOR_GRAY2RGB);
-    }
-
-    const QImage::Format format = rgb.channels() == 4
-            ? QImage::Format_RGBA8888
-            : QImage::Format_RGB888;
-    const QImage image(rgb.data, rgb.cols, rgb.rows,
-                       static_cast<int>(rgb.step), format);
-    latest_frames_[channelId - 1] = image.copy();
-    QLabel *target = video_windows[channelId - 1];
-    // image.copy() 脱离局部 cv::Mat 的内存，避免函数返回后像素数据失效。
-    target->setPixmap(QPixmap::fromImage(image.copy()).scaled(
-        target->size(), Qt::KeepAspectRatio, Qt::FastTransformation));
+    if (!auth_session.isLoggedIn() || shutting_down_workers_ || channelId < 1
+            || channelId > 4 || frame.empty() || !preview_running_[channelId - 1]) return;
+    const int index = channelId - 1;
+    // 保留源帧供全分辨率截图使用，平时不做全帧深复制。
+    latest_source_frames_[index] = frame;
+    QLabel *target = video_windows[index];
+    if (!target->isVisible() || isMinimized()) return;
+    const QImage image = frameImage(frame);
+    if (image.isNull()) return;
+    // 缩小之后再创建 QPixmap，减少全尺寸转换与拷贝。
+    target->setPixmap(QPixmap::fromImage(image.scaled(
+        target->size(), Qt::KeepAspectRatio, Qt::FastTransformation)));
 }
 
 void MainWidget::show_capture_error(int channelId, const QString &message)
@@ -1490,14 +1512,16 @@ void MainWidget::on_capture_state_changed(int channelId, bool running)
     if (channelId < 1 || channelId > 4) {
         return;
     }
+    running = running && !shutting_down_workers_;
     preview_running_[channelId - 1] = running;
     if (!running) {
         if (record_tasks_[channelId - 1])
             QMetaObject::invokeMethod(record_tasks_[channelId - 1], "stop", Qt::QueuedConnection);
-        latest_frames_[channelId - 1] = QImage();
+        latest_source_frames_[channelId - 1].release();
         video_windows[channelId - 1]->setText(
-            QStringLiteral("%1\n预览已停止")
-                .arg(channel_configs_.at(channelId - 1).name));
+            QStringLiteral("%1\n%2")
+                .arg(channel_configs_.at(channelId - 1).name,
+                     auth_session.isLoggedIn() ? "预览已停止" : "请先登录"));
     }
     refresh_channel_list();
 }
@@ -1577,7 +1601,9 @@ void MainWidget::init_management_pages()
         }
     });
     auto dailyBackup = new QTimer(this);
+    dailyBackup->setObjectName("dailyBackupTimer");
     const auto backupIfDue = [backup,startBackup]{
+        if (qEnvironmentVariable("SMART_MONITOR_AUTOSTART", "1") == "0") return;
         QSettings settings;
         const auto last=settings.value("backup/lastSuccess").toDateTime();
         if(!backup->running() && (!last.isValid() || last.secsTo(QDateTime::currentDateTime())>=86400))
@@ -1586,24 +1612,34 @@ void MainWidget::init_management_pages()
     connect(dailyBackup,&QTimer::timeout,this,backupIfDue);
     if(qEnvironmentVariable("SMART_MONITOR_AUTOSTART")!="0") {
         dailyBackup->start(3600000);
-        QTimer::singleShot(5000,this,backupIfDue);
+        QTimer::singleShot(5000, this, backupIfDue);
+
     }
     auto recoverTimer=new QTimer(this);
+    recoverTimer->setObjectName("mediaRecoveryTimer");
     connect(recoverTimer,&QTimer::timeout,this,[this]{
+        if (qEnvironmentVariable("SMART_MONITOR_AUTOSTART", "1") == "0") return;
         MediaRecoveryService recovery(DbConn::getInstance()->database(),recovery_directory_,image_directory_);
         QStringList errors;const int count=recovery.replay(errors);
         if(!errors.isEmpty())lab_storage_warning->setText("媒体恢复待处理："+errors.first());
         else if(count>0)lab_storage_warning->setText(QString("已恢复 %1 条媒体记录").arg(count));
     });
-    recoverTimer->start(60000);
-    if (qEnvironmentVariable("SMART_MONITOR_AUTOSTART") != "0")
+    if (qEnvironmentVariable("SMART_MONITOR_AUTOSTART", "1") != "0") {
+        recoverTimer->start(60000);
         QTimer::singleShot(0, recoverTimer, [recoverTimer]{ QMetaObject::invokeMethod(recoverTimer, "timeout"); });
+    }
+
     update_management_access();
 }
 void MainWidget::update_management_access()
 {
     const bool allowed=auth_session.isLoggedIn();
-    for(auto button:{images_button_,logs_button_})if(button)button->setEnabled(allowed);
+    for (auto button : {images_button_, logs_button_, btn_start_preview, btn_stop_preview,
+                        btn_playback_page, btn_setting_page, btn_one, btn_four})
+        if (button) button->setEnabled(allowed);
+    if (auto snapshot = findChild<QPushButton*>("previewSnapshotButton")) snapshot->setEnabled(allowed);
+    page_stack->widget(1)->setEnabled(allowed);
+    page_stack->widget(2)->setEnabled(allowed);
     if(image_page_)image_page_->setEnabled(allowed);
     if(log_page_)log_page_->setEnabled(allowed);
 }
@@ -1618,9 +1654,18 @@ void MainWidget::open_linked_video(qint64 id,qint64 offset)
     if(!require_permission(AuthPermission::Playback,"打开关联录像"))return;
     VideoRecord record;QString error;
     if(!video_service.findById(id,record,error) || !QFileInfo::exists(record.path)){
-        lab_storage_warning->setText(error.isEmpty() ? "录像文件不存在" : error);return;
+        playback_player_->stop();
+        playback_player_->setSource(QUrl());
+        current_playback_ = VideoRecord();
+        pending_playback_offset_ = -1;
+        // 回放失败必须出现在回放页，不能只更新隐藏的监控页提示。
+        page_stack->setCurrentIndex(1);
+        btn_playback_page->setChecked(true);
+        lab_playback_status->setText(error.isEmpty() ? "录像文件不存在" : error);
+        return;
     }
     current_playback_=record;pending_playback_offset_=qMax<qint64>(0,offset);
+    lab_playback_status->setText(QStringLiteral("当前录像：%1").arg(record.name));
     page_stack->setCurrentIndex(1);btn_playback_page->setChecked(true);
     playback_player_->stop();
     const QUrl source = QUrl::fromLocalFile(record.path);
@@ -1639,7 +1684,7 @@ void MainWidget::take_preview_snapshot()
     const int index=selected_channel_-1;
     FeatureImage saved;QString error;
     ImageService service(DbConn::getInstance()->database(),image_directory_);
-    if(!service.saveManualImage(latest_frames_[index],selected_channel_,QDateTime::currentDateTime(),0,0,saved,error)){
+    if(!service.saveManualImage(frameImage(latest_source_frames_[index]).copy(),selected_channel_,QDateTime::currentDateTime(),0,0,saved,error)){
         lab_storage_warning->setText(error);return;
     }
     audit("截图",saved.imagePath);lab_storage_warning->setText("截图已保存到图片管理");
@@ -1649,7 +1694,7 @@ void MainWidget::apply_detection_mode()
 {
     for(int i=0;i<4;++i){
         auto task=monitor_tasks_[i];if(!task)continue;
-        const bool enabled=single_mode_&&detection_enabled_value_&&i==selected_channel_-1;
+        const bool enabled=detection_enabled_value_;
         const QString path=yolo_model_path_;const double confidence=detection_confidence_value_;
         QMetaObject::invokeMethod(task,[task,enabled,path,confidence]{task->configureDetection(enabled,path,confidence);},Qt::QueuedConnection);
     }

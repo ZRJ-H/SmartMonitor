@@ -4,4 +4,9 @@
     <qresource prefix="/">
         <file>picture/OIP-C3.webp</file>
     </qresource>
+    <qresource prefix="/theme">
+        <file alias="up.png">picture/theme/up.png</file>
+        <file alias="down.png">picture/theme/down.png</file>
+        <file alias="check.png">picture/theme/check.png</file>
+    </qresource>
 </RCC>

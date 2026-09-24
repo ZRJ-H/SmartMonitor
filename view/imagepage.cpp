@@ -112,7 +112,27 @@ void ImagePage::initUi()
     thumbnails->setGridSize(QSize(180,140));
     thumbnails->setFixedWidth(550);
     content->addWidget(thumbnails,3);
-    connect(thumbnails,&QListWidget::currentRowChanged,this,[this](int row){table->setCurrentCell(row,0);});
+    // 以可见缩略图的选择为准，取消最后一项时同时清除隐藏记录索引。
+    const auto syncThumbnailSelection = [this]{
+        const auto selected=thumbnails->selectedItems();
+        if(selected.isEmpty()) {
+            const QSignalBlocker blocker(table);
+            table->clearSelection();
+            table->setCurrentCell(-1,-1);
+            clearSelectionState();
+            return;
+        }
+        auto current=thumbnails->currentItem();
+        if(!current || !current->isSelected()) current=selected.first();
+        const int row=thumbnails->row(current);
+        {
+            const QSignalBlocker blocker(table);
+            table->setCurrentCell(row,0);
+        }
+        updatePreview(row);
+    };
+    connect(thumbnails,&QListWidget::itemSelectionChanged,this,syncThumbnailSelection);
+    connect(thumbnails,&QListWidget::currentItemChanged,this,syncThumbnailSelection);
     connect(thumbnails,&QListWidget::itemDoubleClicked,this,[this]{openViewer();});
 
     QVBoxLayout *previewLayout = new QVBoxLayout;
@@ -182,6 +202,11 @@ void ImagePage::reload()
     }
 
     if(images.isEmpty() && currentPage>1){--currentPage;reload();return;}
+    {
+        const QSignalBlocker blocker(table);
+        table->clearSelection();
+        table->setCurrentCell(-1,-1);
+    }
     currentImages = images;
     thumbnails->clear();
     table->setRowCount(currentImages.size());

@@ -1,5 +1,20 @@
 // 主窗口界面测试：验证启动后的四画面布局及通道控制、四行配置控件是否齐全。
 #include <QtTest>
+#include <QThread>
+#include <QTimer>
+#include <QMessageBox>
+#include "../manager/windowmanager.h"
+#include "../view/loginwidget.h"
+#include <QTemporaryDir>
+#include <QFontDatabase>
+#include <QScrollArea>
+#include <QAbstractSpinBox>
+#include <QScrollBar>
+#include <QStandardPaths>
+#include <QScopeGuard>
+#include "../service/channelconfigpolicy.h"
+#include <QMediaPlayer>
+#include <opencv2/videoio.hpp>
 #include "testdatabase.h"
 
 #include "../view/mainwidget.h"
@@ -9,11 +24,358 @@
 #include <QListWidget>
 #include <QPushButton>
 
+namespace {
+// 所有后台测试只使用内存数据库和临时 AVI，不打开摄像头或生产文件。
+bool prepareBackgroundSources(const QTemporaryDir &directory, QString &error)
+{
+    const QString source = directory.filePath("source.avi");
+    cv::VideoWriter writer(source.toStdString(), cv::VideoWriter::fourcc('M','J','P','G'),
+                           12, cv::Size(320,240));
+    if (!writer.isOpened()) { error = "Cannot create synthetic AVI"; return false; }
+    // 红色随真实源帧单调递增，可区分持续解码、重复末帧和重新打开文件。
+    for (int frame=0; frame<96; ++frame)
+        writer.write(cv::Mat(240,320,CV_8UC3,cv::Scalar(20,40,30+frame*2)));
+    writer.release();
+    auto channels = ChannelConfigPolicy::defaults();
+    for (auto &channel : channels) {
+        channel.sourceType = ChannelSourceType::File;
+        channel.filePath = source;
+    }
+    ChannelConfigService service;
+    if (!service.save(channels,error)) return false;
+    ConfigModel configuration;
+    return configuration.upsertValue("record.directory",directory.filePath("recordings"))
+            && configuration.upsertValue("record.segment_seconds","60")
+            && configuration.upsertValue("image_dir",directory.filePath("images"))
+            && configuration.upsertValue("detection.enabled","0");
+}
+
+void clearBackgroundTestData()
+{
+    QSqlQuery query(DbConn::getInstance()->database());
+    for (const char *table : {"event_media_link", "feature_image", "monitor_event",
+                              "exception_log", "video", "sys_config"})
+        query.exec(QString("DELETE FROM %1").arg(table));
+}
+
+bool allPreviewFramesAreHidden(const MainWidget &widget)
+{
+    for (auto window : widget.findChildren<QLabel*>("videoWindow"))
+        if (!window->pixmap().isNull()) return false;
+    return true;
+}
+}
+
 class Day3MainWidgetTests : public QObject
 {
     Q_OBJECT
 
 private slots:
+
+    void guestStartsBackgroundWorkersAndRejectsFrames() {
+        MainWidget widget;widget.show();QTest::qWait(20);
+        const auto workers = widget.findChildren<QThread*>();
+        QCOMPARE(workers.size(),8);
+        for(auto thread:workers) QVERIFY(thread->isRunning());
+        QVERIFY(!widget.findChild<QPushButton*>("startPreviewButton")->isEnabled());
+        cv::Mat frame(120,160,CV_8UC3,cv::Scalar(0,200,0));
+        QVERIFY(QMetaObject::invokeMethod(&widget,"display_frame",Q_ARG(cv::Mat,frame),Q_ARG(int,1)));
+        for(auto label:widget.findChildren<QLabel*>("videoWindow")) QVERIFY(label->pixmap().isNull());
+    }
+    void logoutKeepsWorkersClearsPreviewAndAllowsLoginAgain() {
+        MainWidget widget;widget.show();QTest::qWait(20);
+        const auto workers = widget.findChildren<QThread*>();
+        QCOMPARE(workers.size(),8);
+        widget.setLoggedInUser(17,"admin17");
+        QCOMPARE(widget.findChildren<QThread*>(),workers);
+        QVERIFY(QMetaObject::invokeMethod(&widget,"on_capture_state_changed",Q_ARG(int,1),Q_ARG(bool,true)));
+        cv::Mat frame(120,160,CV_8UC3,cv::Scalar(0,200,0));
+        QVERIFY(QMetaObject::invokeMethod(&widget,"display_frame",Q_ARG(cv::Mat,frame),Q_ARG(int,1)));
+        QVERIFY(!widget.findChildren<QLabel*>("videoWindow").first()->pixmap().isNull());
+        QSignalSpy loginRequest(&widget,&MainWidget::login_requested);
+        // 兼容修复前的退出提示，防止 modal 对话框挂起回归。
+        QTimer closer;connect(&closer,&QTimer::timeout,[] {for(auto window:QApplication::topLevelWidgets()) if(auto box=qobject_cast<QMessageBox*>(window)) box->accept();});closer.start(20);
+        widget.findChild<QPushButton*>("loginButton")->click();closer.stop();
+        QCOMPARE(loginRequest.count(),1);
+        QCOMPARE(widget.findChildren<QThread*>(),workers);
+        for(auto thread:workers) QVERIFY(thread->isRunning());
+        QVERIFY(QMetaObject::invokeMethod(&widget,"display_frame",Q_ARG(cv::Mat,frame),Q_ARG(int,1)));
+        for(auto label:widget.findChildren<QLabel*>("videoWindow")) QVERIFY(label->pixmap().isNull());
+        widget.setLoggedInUser(17,"admin17");QTest::qWait(20);
+        QCOMPARE(widget.findChildren<QThread*>(),workers);
+        for(auto thread:widget.findChildren<QThread*>()) QVERIFY(thread->isRunning());
+        for(auto window:widget.findChildren<QLabel*>("videoWindow")) QVERIFY(!window->text().contains("请先登录"));
+    }
+    void startupRoutesToLoginWindow() {
+        auto manager=WindowManager::getInstance();manager->showMainWindow();QTest::qWait(20);
+        bool mainVisible=false,loginVisible=false;
+        for(auto window:QApplication::topLevelWidgets()) {
+            if(qobject_cast<MainWidget*>(window))mainVisible=mainVisible||window->isVisible();
+            if(qobject_cast<LoginWidget*>(window))loginVisible=loginVisible||window->isVisible();
+        }
+        WindowManager::releaseInstance();
+        QVERIFY(!mainVisible);QVERIFY(loginVisible);
+    }
+    void hiddenChannelDoesNotRenderPixmap() {
+        MainWidget widget;widget.show();widget.setLoggedInUser(17,"admin17");
+        QVERIFY(QMetaObject::invokeMethod(&widget,"show_single_window"));
+        QVERIFY(QMetaObject::invokeMethod(&widget,"on_capture_state_changed",Q_ARG(int,2),Q_ARG(bool,true)));
+        cv::Mat frame(1080,1920,CV_8UC3,cv::Scalar(0,200,0));
+        QVERIFY(QMetaObject::invokeMethod(&widget,"display_frame",Q_ARG(cv::Mat,frame),Q_ARG(int,2)));
+        QVERIFY(widget.findChildren<QLabel*>("videoWindow").at(1)->pixmap().isNull());
+    }
+
+    void settingsRemainReadableAtSmallWindowSizes_data() {
+        QTest::addColumn<QSize>("windowSize");
+        QTest::newRow("minimum")<<QSize(960,600);
+        QTest::newRow("default")<<QSize(1280,760);
+    }
+    void settingsRemainReadableAtSmallWindowSizes() {
+        QFETCH(QSize,windowSize);
+        MainWidget widget;widget.setLoggedInUser(17,"admin17");
+        widget.resize(windowSize);widget.show();
+        QVERIFY(QMetaObject::invokeMethod(&widget,"show_setting_page"));QTest::qWait(20);
+        auto page=widget.findChild<QWidget*>("settingPage");
+        for(auto input:page->findChildren<QLineEdit*>()) {
+            // SpinBox 已在外壳分配边距，内部编辑器只要求完整容纳字体高度。
+            const int padding=qobject_cast<QAbstractSpinBox*>(input->parentWidget())?0:6;
+            QVERIFY2(input->height()>=input->fontMetrics().height()+padding,
+                     qPrintable(QString("%1 height=%2 font=%3").arg(input->objectName()).arg(input->height()).arg(input->fontMetrics().height())));
+        }
+        auto scroll=widget.findChild<QScrollArea*>("settingsScrollArea");QVERIFY(scroll);
+        QVERIFY(scroll->verticalScrollBar()->maximum()>0);
+        auto save=widget.findChild<QPushButton*>("saveChannelConfigButton");
+        scroll->ensureWidgetVisible(save);QTest::qWait(20);
+        QVERIFY(!save->visibleRegion().isEmpty());
+    }
+
+    void realBackgroundRecordingSpansGuestAndLoginSessions() {
+        QTemporaryDir directory;QVERIFY(directory.isValid());
+        const auto cleanup = qScopeGuard([] { clearBackgroundTestData(); });
+        QString error;QVERIFY2(prepareBackgroundSources(directory,error),qPrintable(error));
+        QSqlQuery query(DbConn::getInstance()->database());
+        {
+            // 直接覆盖正式启动路径；随即关闭后续自动维护，防止触碰其他测试目录。
+            const auto restoreAutostart=qScopeGuard([] { qputenv("SMART_MONITOR_AUTOSTART","0"); });
+            qputenv("SMART_MONITOR_AUTOSTART","1");
+            MainWidget widget;
+            qputenv("SMART_MONITOR_AUTOSTART","0");
+            widget.show();
+            const auto workers=widget.findChildren<QThread*>();
+            QCOMPARE(workers.size(),8);
+            QVERIFY(!widget.findChild<QPushButton*>("startPreviewButton")->isEnabled());
+            const QDir recordings(directory.filePath("recordings"));
+            QTRY_COMPARE_WITH_TIMEOUT(recordings.entryList({"*.mp4"},QDir::Files).size(),4,4000);
+            for(int sample=0;sample<7;++sample) {
+                QTest::qWait(100);
+                QVERIFY(allPreviewFramesAreHidden(widget));
+            }
+            // 未登录时直接调用界面槽也不能改变后台通道状态。
+            QVERIFY(QMetaObject::invokeMethod(&widget,"stop_selected_preview"));
+            QVERIFY(QMetaObject::invokeMethod(&widget,"start_selected_preview"));
+            widget.setLoggedInUser(17,"admin17");
+            QCOMPARE(widget.findChildren<QThread*>(),workers);
+            auto window=widget.findChildren<QLabel*>("videoWindow").first();
+            QTRY_VERIFY_WITH_TIMEOUT(!window->pixmap().isNull(),2000);
+            const QImage beforeLogout=window->pixmap().toImage();
+            const int beforeRed=beforeLogout.pixelColor(beforeLogout.width()/2,beforeLogout.height()/2).red();
+            widget.findChild<QPushButton*>("loginButton")->click();
+            QCOMPARE(widget.findChildren<QThread*>(),workers);
+            for(auto thread:workers) QVERIFY(thread->isRunning());
+            for(int sample=0;sample<10;++sample) {
+                QTest::qWait(100);
+                QVERIFY(allPreviewFramesAreHidden(widget));
+            }
+            // 普通段尚未到60秒，注销不能封口或重新配置录像任务。
+            QVERIFY(query.exec("SELECT COUNT(*) FROM video"));QVERIFY(query.next());
+            QCOMPARE(query.value(0).toInt(),0);
+            widget.setLoggedInUser(17,"admin17");
+            QCOMPARE(widget.findChildren<QThread*>(),workers);
+            QTRY_VERIFY_WITH_TIMEOUT(!window->pixmap().isNull(),2000);
+            const QImage afterLogout=window->pixmap().toImage();
+            const int afterRed=afterLogout.pixelColor(afterLogout.width()/2,afterLogout.height()/2).red();
+            QVERIFY2(afterRed>=beforeRed+12,"Source must advance during logout, without restarting or repeating the last frame");
+            QTest::qWait(200);
+            widget.findChild<QPushButton*>("loginButton")->click();
+            QVERIFY(allPreviewFramesAreHidden(widget));
+            // 仅销毁整个监控对象时关闭采集、封口录像并完成最终入库。
+        }
+        QVERIFY(query.exec("SELECT video_path,channel_id FROM video ORDER BY channel_id"));
+        int rows=0;
+        while(query.next()) {
+            QCOMPARE(query.value(1).toInt(),++rows);
+            const QString path=query.value(0).toString();QVERIFY(path.startsWith(directory.path()));
+            cv::VideoCapture saved(path.toStdString(),cv::CAP_FFMPEG,{cv::CAP_PROP_N_THREADS,2});
+            QVERIFY(saved.isOpened());
+            cv::Mat frame;int decoded=0;double firstRed=0,lastRed=0;
+            while(saved.read(frame)) {
+                const double red=cv::mean(frame)[2];
+                if(decoded++==0)firstRed=red;
+                lastRed=red;
+            }
+            QVERIFY2(decoded>=15,"Recording must include actual frames before and during login/logout");
+            QVERIFY2(lastRed>=firstRed+25,"Recording must contain changing source frames throughout the session");
+        }
+        QCOMPARE(rows,4);
+    }
+
+    void guestDetectionStartsEventRecordingOnUnselectedChannel() {
+        QTemporaryDir directory;QVERIFY(directory.isValid());
+        const auto cleanup = qScopeGuard([] { clearBackgroundTestData(); });
+        QString error;QVERIFY2(prepareBackgroundSources(directory,error),qPrintable(error));
+        const QString eventKey="guest-channel-2-event";
+        ConfigModel config;QVERIFY(config.upsertValue("detection.enabled","1"));
+        {
+            MainWidget widget;widget.show();
+            QVERIFY(QMetaObject::invokeMethod(&widget,"start_configured_previews"));
+            const QDir recordings(directory.filePath("recordings"));
+            QTRY_COMPARE_WITH_TIMEOUT(recordings.entryList({"*.mp4"},QDir::Files).size(),4,4000);
+            // 注入真实检测完成回调，验证匿名后台、默认四画面及非选中通道的录像链。
+            // 此用例不替代 MonitorTask 自身的模型推理测试。
+            QVERIFY(QMetaObject::invokeMethod(&widget,"on_person_detected",Q_ARG(int,2),
+                Q_ARG(QString,eventKey),Q_ARG(QDateTime,QDateTime::currentDateTime()),Q_ARG(double,0.85)));
+            QTRY_COMPARE_WITH_TIMEOUT(recordings.entryList({"*.mp4"},QDir::Files).size(),5,3000);
+            const auto workers=widget.findChildren<QThread*>();
+            QVERIFY(allPreviewFramesAreHidden(widget));
+            widget.setLoggedInUser(17,"admin17");
+            QVERIFY(QMetaObject::invokeMethod(&widget,"show_single_window"));
+            QTest::qWait(150);
+            widget.findChild<QPushButton*>("loginButton")->click();
+            QTest::qWait(250);
+            QVERIFY(allPreviewFramesAreHidden(widget));
+            QCOMPARE(recordings.entryList({"*.mp4"},QDir::Files).size(),5);
+            widget.setLoggedInUser(17,"admin17");
+            QVERIFY(QMetaObject::invokeMethod(&widget,"show_multi_window"));
+            QTest::qWait(150);
+            QCOMPARE(widget.findChildren<QThread*>(),workers);
+            QCOMPARE(recordings.entryList({"*.mp4"},QDir::Files).size(),5);
+            QSqlQuery pending(DbConn::getInstance()->database());
+            QVERIFY(pending.exec("SELECT COUNT(*) FROM event_media_link"));QVERIFY(pending.next());
+            QCOMPARE(pending.value(0).toInt(),0);
+            // 会话及画面布局不能提前封口事件；仅本作用域退出时写入中断事件。
+        }
+        QSqlQuery query(DbConn::getInstance()->database());
+        query.prepare("SELECT e.channel_id,e.event_status,v.video_path,v.video_type FROM event_media_link l "
+                      "JOIN exception_log e ON e.id=l.exception_id JOIN video v ON v.id=l.video_id WHERE l.event_key=:key");
+        query.bindValue(":key",eventKey);QVERIFY(query.exec());QVERIFY(query.next());
+        QCOMPARE(query.value(0).toInt(),2);
+        QCOMPARE(query.value(1).toString(),QString("interrupted"));
+        QCOMPARE(query.value(3).toString(),QString("event"));
+        const QString path=query.value(2).toString();QVERIFY(path.startsWith(directory.path()));
+        cv::VideoCapture saved(path.toStdString(),cv::CAP_FFMPEG,{cv::CAP_PROP_N_THREADS,2});
+        cv::Mat decoded;QVERIFY(saved.read(decoded));
+        QVERIFY(!query.next());
+    }
+
+    void previewColorsAndSnapshotKeepOriginalResolution() {
+        QTemporaryDir dir;QVERIFY(dir.isValid());
+        ConfigModel config;QVERIFY(config.upsertValue("image_dir",dir.path()));
+        QSqlQuery sql(DbConn::getInstance()->database());
+        const auto cleanup = qScopeGuard([&] {sql.exec("DELETE FROM sys_config WHERE config_key='image_dir'");sql.exec("DELETE FROM feature_image");});
+        MainWidget widget;widget.show();widget.setLoggedInUser(17,"admin17");
+        QVERIFY(QMetaObject::invokeMethod(&widget,"on_capture_state_changed",Q_ARG(int,1),Q_ARG(bool,true)));
+        cv::Mat source(1080,1920,CV_8UC3,cv::Scalar(20,80,220));
+        QVERIFY(QMetaObject::invokeMethod(&widget,"display_frame",Q_ARG(cv::Mat,source),Q_ARG(int,1)));
+        const QString captureDir=qEnvironmentVariable("SMART_MONITOR_UI_CAPTURE_DIR");
+        if(!captureDir.isEmpty()) {
+            QDir().mkpath(captureDir);
+            QTest::qWait(20);widget.grab().save(QDir(captureDir).filePath("main-preview.png"));
+            QVERIFY(QMetaObject::invokeMethod(&widget,"show_setting_page"));
+            QTest::qWait(20);widget.grab().save(QDir(captureDir).filePath("main-settings.png"));
+            QVERIFY(QMetaObject::invokeMethod(&widget,"show_monitor_page"));
+        }
+        const QImage preview=widget.findChildren<QLabel*>("videoWindow").first()->pixmap().toImage();
+        QVERIFY(preview.width()<source.cols);
+        QCOMPARE(preview.pixelColor(preview.width()/2,preview.height()/2),QColor(220,80,20));
+        // 放开生产者的引用，截图仍须保留原帧，并且不能保存缩略图。
+        source.release();
+        widget.findChild<QPushButton*>("previewSnapshotButton")->click();
+        QVERIFY(sql.exec("SELECT image_path FROM feature_image ORDER BY id DESC LIMIT 1"));
+        QVERIFY(sql.next());
+        const QImage snapshot(sql.value(0).toString());
+        QCOMPARE(snapshot.size(),QSize(1920,1080));
+        QVERIFY(qAbs(snapshot.pixelColor(960,540).red()-220)<=3);
+    }
+
+    void failedPlaybackStopsOldVideoAndSuccessClearsError() {
+        QTemporaryDir dir;const QString path=dir.filePath("playback.avi");
+        cv::VideoWriter writer(path.toStdString(),cv::VideoWriter::fourcc('M','J','P','G'),10,cv::Size(32,24));
+        QVERIFY(writer.isOpened());for(int i=0;i<30;++i)writer.write(cv::Mat(24,32,CV_8UC3,cv::Scalar(i*5,40,80)));writer.release();
+        QSqlQuery query(DbConn::getInstance()->database());
+        query.prepare("INSERT INTO video(id,video_name,video_path,channel_id,start_time,end_time,file_size) VALUES(65001,'test',:path,1,:start,:end,100)");
+        query.bindValue(":path",path);query.bindValue(":start",QDateTime::currentDateTime().addSecs(-10));query.bindValue(":end",QDateTime::currentDateTime());QVERIFY(query.exec());
+        MainWidget widget;widget.setLoggedInUser(17,"admin17");widget.show();
+        auto list=widget.findChild<QListWidget*>("recordList");QVERIFY(list);list->clear();
+        auto valid=new QListWidgetItem("valid",list);valid->setData(Qt::UserRole+1,65001);
+        auto missing=new QListWidgetItem("missing",list);missing->setData(Qt::UserRole+1,999999);
+        auto player=widget.findChild<QMediaPlayer*>();QVERIFY(player);
+        list->setCurrentItem(valid);QVERIFY(QMetaObject::invokeMethod(&widget,"play_selected_record"));
+        QTRY_VERIFY_WITH_TIMEOUT(player->duration()>0,3000);
+        QCOMPARE(player->source(),QUrl::fromLocalFile(path));
+        list->setCurrentItem(missing);QVERIFY(QMetaObject::invokeMethod(&widget,"play_selected_record"));
+        QCOMPARE(player->playbackState(),QMediaPlayer::StoppedState);
+        QVERIFY(player->source().isEmpty());
+        list->setCurrentItem(valid);QVERIFY(QMetaObject::invokeMethod(&widget,"play_selected_record"));
+        QCOMPARE(player->source(),QUrl::fromLocalFile(path));
+        QTRY_VERIFY_WITH_TIMEOUT(player->duration()>0,3000);
+        QCOMPARE(player->error(),QMediaPlayer::NoError);
+        auto page=widget.findChild<QWidget*>("playbackPage");
+        for(auto label:page->findChildren<QLabel*>()) QVERIFY(!label->text().contains(QString::fromUtf8("录像记录不存在")));
+        QVERIFY(QMetaObject::invokeMethod(&widget,"stop_playback"));
+        QVERIFY(query.exec("DELETE FROM video WHERE id=65001"));
+    }
+
+    void backgroundChannelRefreshDoesNotReselectOrChangeSingleView() {
+        MainWidget widget;widget.show();QTest::qWait(20);
+        auto list=widget.findChild<QListWidget*>("deviceList");QVERIFY(list);
+        list->setCurrentRow(2);QVERIFY(QMetaObject::invokeMethod(&widget,"show_single_window"));
+        QSignalSpy selectionChanges(list,&QListWidget::currentRowChanged);
+        QVERIFY(QMetaObject::invokeMethod(&widget,"on_capture_state_changed",Q_ARG(int,1),Q_ARG(bool,true)));
+        QCOMPARE(list->currentRow(),2);
+        QCOMPARE(selectionChanges.count(),0);
+        auto windows=widget.findChildren<QLabel*>("videoWindow");
+        for(int i=0;i<4;++i) QCOMPARE(!windows[i]->isHidden(),i==2);
+    }
+    void missingPlaybackRecordReportsErrorOnPlaybackPage() {
+        MainWidget widget;widget.setLoggedInUser(17,"admin17");widget.show();
+        QVERIFY(QMetaObject::invokeMethod(&widget,"show_playback_page"));
+        auto list=widget.findChild<QListWidget*>("recordList");QVERIFY(list);
+        auto item=new QListWidgetItem("missing",list);item->setData(Qt::UserRole+1,999999);list->setCurrentItem(item);
+        QVERIFY(QMetaObject::invokeMethod(&widget,"play_selected_record"));
+        auto page=widget.findChild<QWidget*>("playbackPage");QVERIFY(page);
+        bool visibleError=false;
+        for(auto label:page->findChildren<QLabel*>()) if(label->isVisible()&&label->text().contains(QString::fromUtf8("录像记录不存在"))) visibleError=true;
+        QVERIFY2(visibleError,"Playback error must be visible on the current page");
+    }
+
+    void singleViewFollowsMouseChannelSelection() {
+        MainWidget widget; widget.show(); QTest::qWait(20);
+        auto list=widget.findChild<QListWidget*>("deviceList"); QVERIFY(list);
+        QVERIFY(QMetaObject::invokeMethod(&widget,"show_single_window"));
+        QTest::mouseClick(list->viewport(),Qt::LeftButton,Qt::NoModifier,list->visualItemRect(list->item(2)).center());
+        auto windows=widget.findChildren<QLabel*>("videoWindow");
+        QCOMPARE(windows.size(),4);
+        for(int i=0;i<4;++i) QCOMPARE(!windows[i]->isHidden(),i==2);
+        QVERIFY(QMetaObject::invokeMethod(&widget,"show_multi_window"));
+        for(auto window:windows) QVERIFY(!window->isHidden());
+    }
+    void singleViewFollowsKeyboardChannelSelection() {
+        MainWidget widget; widget.show(); QTest::qWait(20);
+        auto list=widget.findChild<QListWidget*>("deviceList"); QVERIFY(list);
+        list->setCurrentRow(0); list->setFocus();
+        QVERIFY(QMetaObject::invokeMethod(&widget,"show_single_window"));
+        QTest::keyClick(list,Qt::Key_Down);
+        QCOMPARE(list->currentRow(),1);
+        auto windows=widget.findChildren<QLabel*>("videoWindow");
+        for(int i=0;i<4;++i) QCOMPARE(!windows[i]->isHidden(),i==1);
+    }
+    void configurationActionsHaveDistinctControls() {
+        MainWidget widget;
+        QCOMPARE(widget.findChildren<QPushButton*>("saveChannelConfigButton").size(),1);
+        QVERIFY(widget.findChild<QPushButton*>("saveRecordingSettingsButton"));
+        QVERIFY(widget.findChild<QPushButton*>("saveDetectionSettingsButton"));
+    }
+
     void managementPagesRequireLoginAndExposeRealControls() {
         MainWidget widget;
         auto imageButton=widget.findChild<QPushButton*>("imagesNavigation");
@@ -29,7 +391,21 @@ private slots:
         QVERIFY(widget.findChild<QWidget*>("operationLogPage")->isEnabled());
     }
 
-    void initTestCase() { QVERIFY(initializeTestDatabase()); }
+    void initTestCase() {
+        QStandardPaths::setTestModeEnabled(true);
+        QFontDatabase::addApplicationFont("C:/Windows/Fonts/msyh.ttc");
+        QVERIFY(initializeTestDatabase());
+        // 本测试的事件链扩展只存在于内存库，不执行生产数据库迁移。
+        QSqlQuery query(DbConn::getInstance()->database());
+        const QStringList statements={
+            "ALTER TABLE video ADD COLUMN video_type TEXT DEFAULT 'normal'",
+            "ALTER TABLE video ADD COLUMN exception_id INTEGER",
+            "CREATE TABLE exception_log(id INTEGER PRIMARY KEY AUTOINCREMENT,channel_id INTEGER,event_type TEXT,event_time TEXT,event_end_time TEXT,confidence REAL,event_status TEXT,event_desc TEXT,related_video_path TEXT)",
+            "CREATE TABLE event_media_link(event_key TEXT PRIMARY KEY,exception_id INTEGER,video_id INTEGER)"
+        };
+        for(const auto &statement:statements)
+            QVERIFY2(query.exec(statement),qPrintable(query.lastError().text()));
+    }
     void cleanupTestCase() { DbConn::releaseDbConn(); }
     // 验证监控页初始显示四个可见视频窗口。
     void monitorPageStartsWithFourVisibleChannels();

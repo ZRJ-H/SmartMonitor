@@ -1,6 +1,7 @@
 #ifndef OPERATIONLOGPAGE_H
 #define OPERATIONLOGPAGE_H
 #include <QWidget>
+#include <QPointer>
 #include "../service/operationlogservice.h"
 class QDateTimeEdit;
 class QLineEdit;
@@ -9,6 +10,8 @@ class QTableWidget;
 class QLabel;
 class QComboBox;
 class QTabWidget;
+class QPushButton;
+class QDialog;
 // 日志页只负责用户输入与展示；所有 SQL 保留在 Model 中。
 class OperationLogPage : public QWidget {
     Q_OBJECT
@@ -19,7 +22,15 @@ public slots:
 signals:
     void playbackRequested(qint64 videoId,qint64 offsetMs);
     void eventImagesRequested(qint64 exceptionId);
+protected:
+    void changeEvent(QEvent *event) override;
+    void hideEvent(QHideEvent *event) override;
+private slots:
+    void showSelectedDetails();
 private:
+    void updateDetailsAction();
+    QPushButton *detailsButton = nullptr;
+    QPointer<QDialog> detailsDialog;
     QTabWidget *tabs;
     QTableWidget *events;
     QComboBox *channel;

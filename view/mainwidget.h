@@ -3,6 +3,7 @@
 #define MAINWIDGET_H
 
 #include "../service/authsession.h"
+#include "../service/latestframebuffer.h"
 #include "../service/channelconfigservice.h"
 #include "../service/videoservice.h"
 #include "../model/configmodel.h"
@@ -11,6 +12,7 @@
 #include <QString>
 #include <QWidget>
 #include <QImage>
+#include <atomic>
 
 #include <opencv2/core.hpp>
 
@@ -45,19 +47,22 @@ class MainWidget : public QWidget
     Q_OBJECT
 
 public:
-    // 构建三类页面、加载配置并启动可用通道的预览任务。
+    // 构建页面、加载配置并启动后台任务；认证仅控制画面和操作权限。
     explicit MainWidget(QWidget *parent = nullptr);
     // 停止所有采集任务并等待线程安全退出。
     ~MainWidget() override;
 
     // 登录成功后建立主窗口会话并更新登录按钮/标签。
     void setLoggedInUser(int userId, const QString &userName);
+    bool isLoggedIn() const { return auth_session.isLoggedIn(); }
 
 signals:
     // 未登录用户请求登录时发出，由 WindowManager 切换到登录窗口。
     void login_requested();
 
 private slots:
+    // 后台启动独立于登录，测试模式可显式触发。
+    void start_configured_previews();
     // 以下三个槽切换堆叠页面；回放和设置页会先检查登录权限。
     void show_monitor_page();
     void show_playback_page();
@@ -85,7 +90,7 @@ private slots:
 
     // 更新当前选中的通道和对应画面标签。
     void select_channel(QListWidgetItem *item);
-    // 启动或停止当前选中通道的预览。
+    // 登录用户手动启动或停止当前通道的采集、录像与检测。
     void start_selected_preview();
     void stop_selected_preview();
     // 接收工作线程帧，转换颜色空间后显示到 channelId 对应窗口。
@@ -129,7 +134,11 @@ private:
     QString image_directory_;
     QString recovery_directory_;
     int capture_interval_value_ = 40;
-    QImage latest_frames_[4];
+    cv::Mat latest_source_frames_[4];
+    LatestFrameBuffer preview_mailboxes_[4];
+    LatestFrameBuffer recording_mailboxes_[4];
+    bool shutting_down_workers_ = false;
+    std::atomic_bool preview_delivery_enabled_{false};
     VideoRecord current_playback_;
     qint64 pending_playback_offset_ = 0;
     // 分别创建控件、应用样式、建立信号槽、启动时钟和工作线程。
@@ -151,8 +160,7 @@ private:
     void update_source_controls(int index);
     // 为指定通道打开视频文件选择对话框。
     void choose_channel_file(int index);
-    // 尝试启动所有配置完整的通道；单路失败不影响其他通道。
-    void start_configured_previews();
+
     // 通过队列调用在对应线程中启动/停止指定下标的采集任务。
     void start_channel(int index);
     void stop_channel(int index);
@@ -161,7 +169,7 @@ private:
     // 检查权限；不足时显示登录提示并返回 false，允许访问返回 true。
     bool require_permission(AuthPermission permission,
                             const QString &actionName);
-    // 清除会话并将受保护页面切回实时预览。
+    // 清除会话和画面并返回登录页；后台采集、录像和检测保持运行。
     void logout();
     void load_system_settings();
     VideoQuery current_video_query() const;
