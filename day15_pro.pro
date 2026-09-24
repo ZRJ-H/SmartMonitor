@@ -90,4 +90,4 @@ RESOURCES += resources.qrc
 
 include($$PWD/day7_day8.pri)
 
-HEADERS += view/apptheme.h
+HEADERS += view/apptheme.h service/detectionworker.h

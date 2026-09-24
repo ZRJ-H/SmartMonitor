@@ -62,6 +62,9 @@ public:
     bool isLoggedIn() const { return auth_session.isLoggedIn(); }
 
 signals:
+    // 诊断信号：只在实际完成 GUI 绘制提交时计数，便于分层测量。
+    void previewFramePresented(int channelId);
+    void detectionCycleCompleted(int channelId, qint64 elapsedMs);
     // 未登录用户请求登录时发出，由 WindowManager 切换到登录窗口。
     void login_requested();
 
@@ -122,6 +125,10 @@ private slots:
     void on_detection_message(int channelId, const QString &message);
 
 private:
+    // 只在启动时读取诊断模式，不修改持久配置。preview / record / full。
+    const QString pipeline_mode_ = qEnvironmentVariable("SMART_MONITOR_PIPELINE", "full");
+    const bool recording_enabled_ = pipeline_mode_ != "preview";
+    const bool detection_allowed_ = pipeline_mode_ == "full";
     bool single_mode_ = false;
     void apply_detection_mode();
     void init_management_pages();
@@ -134,7 +141,6 @@ private:
     QPushButton *images_button_ = nullptr;
     QPushButton *logs_button_ = nullptr;
     QLineEdit *image_directory_edit_ = nullptr;
-    QSpinBox *capture_interval_spin_ = nullptr;
     QComboBox *query_type_ = nullptr;
     QString image_directory_;
     QString recovery_directory_;
@@ -187,8 +193,6 @@ private:
     QPushButton *btn_one;
     QPushButton *btn_four;
     QPushButton *btn_refresh_records;
-    QPushButton *btn_start_preview;
-    QPushButton *btn_stop_preview;
     QPushButton *btn_refresh_cameras;
     QPushButton *btn_save_channel_configs;
     QPushButton *btn_play_record;

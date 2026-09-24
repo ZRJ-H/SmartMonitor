@@ -1,4 +1,7 @@
 #include <QtTest>
+#include <QGraphicsView>
+#include <QFontDatabase>
+#include "../view/apptheme.h"
 
 #include "../view/imagepage.h"
 
@@ -181,16 +184,36 @@ void Day7Day8UiTests::missingImageShowsPlaceholderAndKeepsDeleteAvailable()
     ImagePage page(database, directory.path());
     page.reload();
     QTableWidget *table = page.findChild<QTableWidget *>("imageTable");
-    QLabel *preview = page.findChild<QLabel *>("imagePreview");
+    QLabel *preview = page.findChild<QLabel *>("imageSelectionStatus");
     QPushButton *deleteButton = page.findChild<QPushButton *>("deleteImageButton");
     QVERIFY(table != nullptr);
     QVERIFY(preview != nullptr);
+    QVERIFY(page.findChild<QLabel*>("imagePreview")==nullptr);
     QVERIFY(deleteButton != nullptr);
 
     table->selectRow(0);
     QCoreApplication::processEvents();
     QCOMPARE(preview->text(), QString::fromUtf8("图片文件不存在"));
     QVERIFY(deleteButton->isEnabled());
+    page.resize(1100,650);page.show();QTest::qWait(30);
+    auto grid=page.findChild<QListWidget*>("imageThumbnails");QVERIFY(grid);
+    QVERIFY(grid->width()>page.width()*0.8);
+    QVERIFY(QMetaObject::invokeMethod(&page,"openViewer"));
+    auto viewer=page.findChild<QGraphicsView*>("largeImageView");QVERIFY(viewer);
+    QVERIFY(viewer->window()->isVisible());
+    const auto capture=qEnvironmentVariable("SMART_MONITOR_UI_CAPTURE_DIR");
+    if(!capture.isEmpty()){
+        // offscreen 不自动加载 Windows 中文字体；截图应用产品主题并使用真实 JPG 缩略图。
+        QFontDatabase::addApplicationFont("C:/Windows/Fonts/msyh.ttc");
+        AppTheme::applyMain(&page);
+        for(int i=0;i<8;++i){
+            const QString path=directory.filePath(QString("sample-%1.jpg").arg(i));
+            QImage sample(640,360,QImage::Format_RGB32);sample.fill(QColor::fromHsv(i*35,140,180));
+            QVERIFY(sample.save(path));QVERIFY(insertImage(QString("预览样本 %1").arg(i+1),path,QDateTime::currentDateTime().addSecs(-i))>0);
+        }
+        viewer->window()->close();page.reload();QTest::qWait(40);
+        QDir().mkpath(capture);page.grab().save(QDir(capture).filePath("review-images.png"));
+    }
 }
 
 QTEST_MAIN(Day7Day8UiTests)

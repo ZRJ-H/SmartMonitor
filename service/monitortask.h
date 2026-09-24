@@ -1,5 +1,5 @@
 // 【阅读导引】
-// 单路采集 Worker：读取视频、按配置执行人形检测，再发送独立帧副本和状态。
+// 单路采集 Worker：按源节奏读取视频，检测由独立线程异步执行。
 // 由 MainWidget 移入采集线程；普通直接调用不会因为 moveToThread 自动切换线程。
 
 // 声明单路视频采集任务；对象运行在独立 QThread 中，并以信号向主线程传递帧和状态。
@@ -11,6 +11,7 @@
 #include "frameratelimiter.h"
 
 #include <QObject>
+#include <vector>
 #include <QTimer>
 #include <QDateTime>
 #include <QElapsedTimer>
@@ -21,6 +22,8 @@
 
 // 声明 Qt 元类型支持；这不是像素深拷贝，跨线程像素独立性仍需 clone() 保证。
 Q_DECLARE_METATYPE(cv::Mat)
+class QThread;
+class DetectionWorker;
 
 // 单个通道的采集任务。对象会被移动到独立 QThread，避免读取视频时阻塞界面。
 class MonitorTask : public QObject
@@ -47,6 +50,7 @@ private slots:
     void captureNextFrame();
 
 signals:
+    void detectionCycleCompleted(int channelId, qint64 elapsedMs);
     // 发送帧的独立副本；channelId 用于主线程定位对应画面窗口。
     void frameReady(const cv::Mat &frame, int channelId);
     // 数据源打开后报告通道号和最终采用的帧率。
@@ -71,15 +75,19 @@ private:
     bool detection_enabled_;
     QString detection_model_path_;
     double detection_confidence_;
-    cv::dnn::Net detection_net_;
+    QThread *detection_thread_;
+    DetectionWorker *detection_worker_;
+    quint64 detection_generation_ = 0; // 停止/换源/开关变更时递增，用于丢弃旧结果。
+    bool detection_pending_ = false; // 每路最多一个推理任务，不堆积过时图像。
+    bool detection_ready_ = false;
+    std::vector<cv::Rect> detection_boxes_;
     bool event_active_;
     qint64 last_event_ms_;
     QElapsedTimer last_person_seen_;
     QElapsedTimer detection_clock_;
-    int capture_interval_ms_ = 40;
-    CaptureCadence capture_cadence_;
-    FrameRateLimiter output_limiter_;
-    QElapsedTimer output_clock_;
+    double source_fps_ = 25.0; // 文件元数据帧率；无效时采用 25 FPS。
+    qint64 next_frame_index_ = 0; // 跨循环累计的源帧位置。
+    QElapsedTimer playback_clock_; // 绝对调度基准，避免处理耗时逐帧累加。
 };
 
 #endif // MONITORTASK_H

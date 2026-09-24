@@ -23,6 +23,7 @@
 #include <QPlainTextEdit>
 #include <QShortcut>
 #include <QHideEvent>
+#include <QSignalBlocker>
 
 // 构造对象并初始化所需成员；冒号后的初始化列表先于函数体执行。
 OperationLogPage::OperationLogPage(const QSqlDatabase &db,QWidget *parent):QWidget(parent),service(db) {
@@ -43,7 +44,7 @@ OperationLogPage::OperationLogPage(const QSqlDatabase &db,QWidget *parent):QWidg
     table->setSelectionBehavior(QAbstractItemView::SelectRows);
     table->setEditTriggers(QAbstractItemView::NoEditTriggers);
     tabs=new QTabWidget;
-    events=new QTableWidget(0,5);events->setHorizontalHeaderLabels({"事件","时间","通道","状态","录像"});
+    events=new QTableWidget(0,5);events->setObjectName("eventLogTable");events->setHorizontalHeaderLabels({"事件","时间","通道","状态","录像"});
     events->setSelectionBehavior(QAbstractItemView::SelectRows);events->setEditTriggers(QAbstractItemView::NoEditTriggers);
     events->horizontalHeader()->setSectionResizeMode(QHeaderView::Stretch);
     tabs->addTab(table,"操作日志");tabs->addTab(events,"异常事件");root->addWidget(tabs);
@@ -80,6 +81,10 @@ OperationLogPage::OperationLogPage(const QSqlDatabase &db,QWidget *parent):QWidg
     connect(images,&QPushButton::clicked,this,[this]{
         const int row=events->currentRow();if(tabs->currentIndex()==1&&row>=0&&row<currentEvents.size())emit eventImagesRequested(currentEvents[row].exceptionId);
     });
+    connect(events,&QTableWidget::currentCellChanged,this,[this](int row,int,int,int){
+        if(isEnabled() && tabs->currentIndex()==1 && row>=0 && row<currentEvents.size()
+                && currentEvents[row].videoId>0) emit playbackRequested(currentEvents[row].videoId,0);
+    });
     connect(play,&QPushButton::clicked,this,[this]{
         const int row=events->currentRow();if(tabs->currentIndex()==1&&row>=0&&row<currentEvents.size()&&currentEvents[row].videoId>0)emit playbackRequested(currentEvents[row].videoId,0);
     });
@@ -106,10 +111,12 @@ void OperationLogPage::reload() {
         if(!service.queryEvents(channel->currentData().toInt(),from->dateTime(),to->dateTime(),page,50,currentEvents,error)){
             status->setText(error);return;
         }
+        const QSignalBlocker blocker(events);
+        events->clearSelection();events->setCurrentCell(-1,-1);
         events->setRowCount(currentEvents.size());
         for(int i=0;i<currentEvents.size();++i){
             const auto &e=currentEvents[i];const QStringList values={QString::number(e.exceptionId),e.eventTime.toString("yyyy-MM-dd HH:mm:ss"),QString::number(e.channelId),e.status,QString::number(e.videoId)};
-            for(int c=0;c<5;++c)events->setItem(i,c,new QTableWidgetItem(values[c]));
+            for(int c=0;c<5;++c){events->setItem(i,c,new QTableWidgetItem(values[c]));events->item(i,c)->setToolTip(QString("事件 %1\n通道 %2\n时间 %3\n状态 %4\n选中后直接回放").arg(e.exceptionId).arg(e.channelId).arg(e.eventTime.toString("yyyy-MM-dd HH:mm:ss")).arg(e.status));}
         }
         status->setText(QString("事件第 %1 页，%2 条").arg(page).arg(currentEvents.size()));return;
     }

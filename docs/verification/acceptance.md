@@ -182,3 +182,8 @@ YOLOv8n 标准 COCO ONNX 已安装至 models/yolov8n.onnx，来源和 SHA256 见
 为 76 个手写 C++ 头文件和实现文件补充模块导读、函数职责及关键写法说明，重点覆盖登录结果结构体、线程投递、像素所有权、录像补帧和持久化边界。注释以当前代码为准：预览和录像均采用最新帧缓存，录像补帧维持时间轴，不能恢复被覆盖的真实画面。
 
 本次仅修改注释与验收说明，不更改业务行为；使用词法比对核验 C++ 非注释 token 保持一致。构建与测试结果见 artifacts/verification/latest.json，注释比对结果见 artifacts/verification/comments-check.json。硬件、独立部署与长稳等未完成验收保持开放。
+
+
+## 2026-09-24 评审整改：分层性能与交互
+
+详见 [整改与验收记录](review-remediation-2026-09-24.md)。移除预览 12 FPS 上限，文件按源帧率与绝对期限调度，摄像头不再附加固定延时；YOLO 算法保持，推理独立线程且有界投递。加入 640p/1080p 四个不同文件的三层性能回归、全局开关、事件选择回放和布局/图片交互验证。完整检查使用 scripts/verify-review.ps1，报告仍在 artifacts/verification/latest.json。生产素材、硬件、长稳和逐帧录像完整性保持开放。

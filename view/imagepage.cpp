@@ -117,7 +117,8 @@ void ImagePage::initUi()
     thumbnails->setSelectionMode(QAbstractItemView::ExtendedSelection);
     thumbnails->setIconSize(QSize(160,100));
     thumbnails->setGridSize(QSize(180,140));
-    thumbnails->setFixedWidth(550);
+    thumbnails->setMinimumWidth(0);
+    thumbnails->setSizePolicy(QSizePolicy::Expanding,QSizePolicy::Expanding);
     content->addWidget(thumbnails,3);
     // 以可见缩略图的选择为准，取消最后一项时同时清除隐藏记录索引。
     const auto syncThumbnailSelection = [this]{
@@ -142,12 +143,10 @@ void ImagePage::initUi()
     connect(thumbnails,&QListWidget::currentItemChanged,this,syncThumbnailSelection);
     connect(thumbnails,&QListWidget::itemDoubleClicked,this,[this]{openViewer();});
 
-    QVBoxLayout *previewLayout = new QVBoxLayout;
+    QHBoxLayout *previewLayout = new QHBoxLayout;
     previewLabel = new QLabel(QString::fromUtf8("请选择图片"));
-    previewLabel->setObjectName("imagePreview");
-    previewLabel->setAlignment(Qt::AlignCenter);
-    previewLabel->setMinimumSize(300, 220);
-    previewLabel->setFrameShape(QFrame::StyledPanel);
+    previewLabel->setObjectName("imageSelectionStatus");
+    previewLabel->setSizePolicy(QSizePolicy::Ignored,QSizePolicy::Preferred);
     previewLayout->addWidget(previewLabel, 1);
 
     playbackButton = new QPushButton(QString::fromUtf8("跳转录像"));
@@ -159,8 +158,8 @@ void ImagePage::initUi()
     previewLayout->addWidget(playbackButton);
     previewLayout->addWidget(exportButton);
     previewLayout->addWidget(deleteButton);
-    content->addLayout(previewLayout, 1);
     root->addLayout(content, 1);
+    root->addLayout(previewLayout);
 
     QHBoxLayout *paging = new QHBoxLayout;
     previousButton = new QPushButton(QString::fromUtf8("上一页"));
@@ -266,7 +265,7 @@ int ImagePage::imageIndexForRow(int row) const
     return table->item(row, 0)->data(Qt::UserRole).toInt();
 }
 
-// 根据当前行显示预览及可用操作；文件丢失时显示说明而非假图片。
+// 选择时只更新状态和操作，不加载原图；双击后在弹窗中读取原图。
 void ImagePage::updatePreview(int currentRow)
 {
     const int index = imageIndexForRow(currentRow);
@@ -281,9 +280,7 @@ void ImagePage::updatePreview(int currentRow)
         previewLabel->setPixmap(QPixmap());
         previewLabel->setText(QString::fromUtf8("图片文件不存在"));
     } else {
-        previewLabel->setText(QString());
-        previewLabel->setPixmap(QPixmap(image.imagePath).scaled(
-            previewLabel->size(), Qt::KeepAspectRatio, Qt::SmoothTransformation));
+        previewLabel->setText(QString("已选择：%1（双击缩略图查看大图）").arg(image.imageName));
     }
     exportButton->setEnabled(true);
     deleteButton->setEnabled(true);

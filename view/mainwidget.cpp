@@ -95,8 +95,6 @@ MainWidget::MainWidget(QWidget *parent)
       btn_one(nullptr),
       btn_four(nullptr),
       btn_refresh_records(nullptr),
-      btn_start_preview(nullptr),
-      btn_stop_preview(nullptr),
       btn_refresh_cameras(nullptr),
       btn_save_channel_configs(nullptr),
       btn_play_record(nullptr),
@@ -267,7 +265,7 @@ void MainWidget::init_ui()
     top_layout->addWidget(login_box);
     main_layout->addWidget(top_bar);
 
-    // QStackedWidget 像一叠卡片：三个页面都会加入，但一次只显示其中一个。
+    // QStackedWidget 像一叠卡片：各业务页面依次加入，一次只显示其中一个。
     page_stack = new QStackedWidget;
     page_stack->setObjectName("pageStack");
     main_layout->addWidget(page_stack, 1);
@@ -281,7 +279,8 @@ void MainWidget::init_ui()
 
     QFrame *device_panel = new QFrame;
     device_panel->setObjectName("devicePanel");
-    device_panel->setFixedWidth(245);
+    device_panel->setMinimumWidth(190);
+    device_panel->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Expanding);
     QVBoxLayout *device_layout = new QVBoxLayout(device_panel);
     device_layout->setContentsMargins(20, 18, 20, 18);
     device_layout->setSpacing(12);
@@ -303,7 +302,7 @@ void MainWidget::init_ui()
     btn_refresh_cameras->setObjectName("refreshCamerasButton");
     btn_refresh_cameras->setMinimumHeight(34);
     device_layout->addWidget(btn_refresh_cameras);
-    content_layout->addWidget(device_panel);
+    content_layout->addWidget(device_panel, 1);
 
     QFrame *monitor_panel = new QFrame;
     monitor_panel->setObjectName("monitorPanel");
@@ -340,15 +339,11 @@ void MainWidget::init_ui()
 
     btn_one = new QPushButton("单画面");
     btn_four = new QPushButton("四画面");
-    btn_start_preview = new QPushButton("启动通道");
-    btn_stop_preview = new QPushButton("停止通道");
-    btn_start_preview->setObjectName("startPreviewButton");
-    btn_stop_preview->setObjectName("stopPreviewButton");
-    btn_start_preview->setToolTip("启动所选通道的采集、录像及已启用的检测");
-    btn_stop_preview->setToolTip("停止所选通道的采集、录像和检测；退出登录不会停止通道");
-
+    detection_enabled_box_ = new QCheckBox("全局人形检测");
+    detection_enabled_box_->setObjectName("globalDetectionSwitch");
+    detection_enabled_box_->setToolTip("统一控制四路 YOLO 人形检测；模型和置信度在设置页配置。");
     const QList<QPushButton *> control_buttons = {
-        btn_one, btn_four, btn_start_preview, btn_stop_preview
+        btn_one, btn_four
     };
     for (QPushButton *button : control_buttons) {
         if (button->objectName().isEmpty()) {
@@ -360,15 +355,14 @@ void MainWidget::init_ui()
     control_layout->addWidget(btn_one);
     control_layout->addWidget(btn_four);
     control_layout->addStretch();
-    control_layout->addWidget(btn_start_preview);
-    control_layout->addWidget(btn_stop_preview);
+    control_layout->addWidget(detection_enabled_box_);
 
     monitor_layout->addLayout(control_layout);
     lab_storage_warning = new QLabel;
     lab_storage_warning->setStyleSheet("color:#ffb74d;font-weight:bold;");
     lab_storage_warning->setWordWrap(true);
     monitor_layout->addWidget(lab_storage_warning);
-    content_layout->addWidget(monitor_panel, 1);
+    content_layout->addWidget(monitor_panel, 3);
 
     // ==================== 第 1 页：回放页面 ====================
     QFrame *playback_page = new QFrame;
@@ -386,8 +380,9 @@ void MainWidget::init_ui()
 
     // 左侧列表只显示数据库 video 表中的文件名。
     QFrame *record_panel = new QFrame;
-    record_panel->setObjectName("pageCard");
-    record_panel->setMinimumWidth(560);
+    record_panel->setObjectName("recordFilterPanel");
+    record_panel->setMinimumWidth(250);
+    record_panel->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Expanding);
     QVBoxLayout *record_layout = new QVBoxLayout(record_panel);
 
     QHBoxLayout *record_header_layout = new QHBoxLayout;
@@ -401,7 +396,8 @@ void MainWidget::init_ui()
     record_header_layout->addWidget(btn_refresh_records);
     record_layout->addLayout(record_header_layout);
 
-    QHBoxLayout *filter_layout = new QHBoxLayout;
+    QGridLayout *filter_layout = new QGridLayout;
+    filter_layout->setObjectName("playbackFilterGrid");
     query_start_time_ = new QDateTimeEdit(QDateTime::currentDateTime().addDays(-1));
     query_end_time_ = new QDateTimeEdit(QDateTime::currentDateTime());
     query_start_time_->setCalendarPopup(true);
@@ -412,12 +408,28 @@ void MainWidget::init_ui()
     query_channel_->addItem("全部通道", 0);
     for (int channel = 1; channel <= 4; ++channel)
         query_channel_->addItem(QStringLiteral("通道 %1").arg(channel), channel);
-    filter_layout->addWidget(query_start_time_);
-    filter_layout->addWidget(query_end_time_);
-    filter_layout->addWidget(query_channel_);
     query_type_=new QComboBox;
     query_type_->addItem("全部录像",-1);query_type_->addItem("普通录像",0);query_type_->addItem("事件录像",1);
-    filter_layout->addWidget(query_type_);
+    query_start_time_->setObjectName("playbackStartTime");
+    query_end_time_->setObjectName("playbackEndTime");
+    query_start_time_->setToolTip("开始时间（年-月-日 时:分:秒）");
+    query_end_time_->setToolTip("结束时间（年-月-日 时:分:秒）");
+    // 时间与类别分成两行，忽略默认宽度提示，防止日期编辑器撑宽左栏。
+    for (auto date : {query_start_time_, query_end_time_}) {
+        date->setDisplayFormat("yy-MM-dd HH:mm:ss");
+        date->setMinimumWidth(0);
+        date->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Fixed);
+    }
+    for (auto combo : {query_channel_, query_type_}) {
+        combo->setMinimumWidth(0);
+        combo->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Fixed);
+    }
+    filter_layout->addWidget(query_start_time_,0,0);
+    filter_layout->addWidget(query_channel_,0,1);
+    filter_layout->addWidget(query_end_time_,1,0);
+    filter_layout->addWidget(query_type_,1,1);
+    filter_layout->setColumnStretch(0,2);
+    filter_layout->setColumnStretch(1,1);
     record_layout->addLayout(filter_layout);
 
     video_record_list = new QListWidget;
@@ -438,10 +450,10 @@ void MainWidget::init_ui()
     page_layout->addStretch();
     page_layout->addWidget(btn_next_video_page);
     record_layout->addLayout(page_layout);
-    playback_content->addWidget(record_panel, 2);
+    playback_content->addWidget(record_panel, 3);
 
     QFrame *playback_panel = new QFrame;
-    playback_panel->setObjectName("pageCard");
+    playback_panel->setObjectName("playbackDisplayPanel");
     QVBoxLayout *playback_view_layout = new QVBoxLayout(playback_panel);
     playback_video_ = new QVideoWidget;
     playback_video_->setObjectName("playbackWindow");
@@ -479,7 +491,7 @@ void MainWidget::init_ui()
     }
     playback_controls->addWidget(playback_speed_);
     playback_view_layout->addLayout(playback_controls);
-    playback_content->addWidget(playback_panel, 1);
+    playback_content->addWidget(playback_panel, 7);
     playback_layout->addLayout(playback_content, 1);
 
     // ==================== 第 2 页：设置页面 ====================
@@ -573,7 +585,6 @@ void MainWidget::init_ui()
     recording_grid->addWidget(browse_record_directory, 0, 2);
     recording_grid->addWidget(new QLabel("分段时长"), 1, 0);
     recording_grid->addWidget(record_segment_seconds_, 1, 1);
-    detection_enabled_box_ = new QCheckBox("启用后台人形检测（所有通道）");
     yolo_model_edit_ = new QLineEdit;
     yolo_model_edit_->setPlaceholderText("选择 YOLO ONNX 模型");
     QPushButton *browse_yolo_model = new QPushButton("浏览模型");
@@ -582,16 +593,15 @@ void MainWidget::init_ui()
     detection_confidence_spin_->setRange(0.05, 0.99);
     detection_confidence_spin_->setSingleStep(0.05);
     detection_confidence_spin_->setValue(0.5);
-    recording_grid->addWidget(detection_enabled_box_, 2, 0, 1, 2);
+    recording_grid->addWidget(new QLabel("检测开关位于监控预览页，统一控制所有通道"), 2, 0, 1, 3);
     recording_grid->addWidget(new QLabel("YOLO 模型"), 3, 0);
     recording_grid->addWidget(yolo_model_edit_, 3, 1);
     recording_grid->addWidget(browse_yolo_model, 3, 2);
     recording_grid->addWidget(new QLabel("置信度阈值"), 4, 0);
     recording_grid->addWidget(detection_confidence_spin_, 4, 1);
     image_directory_edit_=new QLineEdit;image_directory_edit_->setObjectName("imageDirectoryEdit");
-    capture_interval_spin_=new QSpinBox;capture_interval_spin_->setRange(10,1000);capture_interval_spin_->setSuffix(" ms");
     recording_grid->addWidget(new QLabel("图片目录"),5,0);recording_grid->addWidget(image_directory_edit_,5,1,1,2);
-    recording_grid->addWidget(new QLabel("采集间隔"),6,0);recording_grid->addWidget(capture_interval_spin_,6,1);
+    recording_grid->addWidget(new QLabel("采集节奏"),6,0);recording_grid->addWidget(new QLabel("文件按源帧率播放；摄像头按设备输出采集"),6,1,1,2);
 
     setting_card_layout->addLayout(recording_grid);
     QHBoxLayout *feature_save_layout = new QHBoxLayout;
@@ -660,8 +670,12 @@ void MainWidget::init_connect()
             this, SLOT(load_previous_video_page()));
     connect(btn_next_video_page, SIGNAL(clicked()),
             this, SLOT(load_next_video_page()));
+    connect(video_record_list, &QListWidget::currentItemChanged, this,
+            [this](QListWidgetItem *item, QListWidgetItem *) {
+        if (item && item->data(Qt::UserRole+2).toBool()) play_selected_record();
+    });
     connect(video_record_list, &QListWidget::itemDoubleClicked,
-            this, [this](QListWidgetItem *) { play_selected_record(); });
+            this, [this](QListWidgetItem *item) { if (!item->data(Qt::UserRole+2).toBool()) play_selected_record(); });
     connect(btn_play_record, &QPushButton::clicked,
             this, &MainWidget::play_selected_record);
     connect(btn_pause_playback, &QPushButton::clicked,
@@ -687,10 +701,27 @@ void MainWidget::init_connect()
 
     connect(device_list, &QListWidget::currentItemChanged,
             this, &MainWidget::select_channel);
-    connect(btn_start_preview, &QPushButton::clicked,
-            this, &MainWidget::start_selected_preview);
-    connect(btn_stop_preview, &QPushButton::clicked,
-            this, &MainWidget::stop_selected_preview);
+    connect(detection_enabled_box_, &QCheckBox::clicked, this, [this](bool enabled) {
+        const auto restore = [this] {
+            const QSignalBlocker blocker(detection_enabled_box_);
+            detection_enabled_box_->setChecked(detection_allowed_ && detection_enabled_value_);
+        };
+        if (!auth_session.isLoggedIn() || !detection_allowed_) { restore(); return; }
+        if (enabled && !QFileInfo::exists(yolo_model_path_)) {
+            restore();
+            lab_storage_warning->setText("启用检测前，请在设置页选择有效的 ONNX 模型。");
+            return;
+        }
+        if (!config_model_.upsertValue("detection.enabled", enabled ? "1" : "0")) {
+            restore();
+            lab_storage_warning->setText("检测开关保存失败，请检查数据库连接。");
+            return;
+        }
+        detection_enabled_value_ = enabled;
+        apply_detection_mode();
+        lab_storage_warning->setText(enabled ? "已请求开启四路人形检测" : "四路人形检测已关闭");
+        audit("修改配置", enabled ? "开启全局人形检测" : "关闭全局人形检测");
+    });
     connect(btn_refresh_cameras, &QPushButton::clicked,
             this, &MainWidget::refresh_camera_devices);
     connect(media_devices_, &QMediaDevices::videoInputsChanged,
@@ -823,10 +854,16 @@ bool MainWidget::load_video_page(int requestedPage)
                 .arg(record.eventVideo ? QStringLiteral(" [事件]") : QString()));
         item->setData(Qt::UserRole, record.path);
         item->setData(Qt::UserRole+1,record.id);
+        item->setData(Qt::UserRole+2,record.eventVideo);
+        item->setToolTip(QString("通道 %1\n%2\n开始：%3\n结束：%4\n大小：%5 字节\n%6")
+            .arg(record.channelId).arg(record.name.toHtmlEscaped())
+            .arg(record.startTime.toString("yyyy-MM-dd HH:mm:ss"))
+            .arg(record.endTime.toString("yyyy-MM-dd HH:mm:ss")).arg(record.fileSize)
+            .arg(record.eventVideo ? "事件录像：选中即可回放" : "普通录像：双击回放"));
         video_record_list->addItem(item);
     }
     lab_video_page->setText(
-        QString("第 %1 / %2 页，共 %3 条")
+        QString("%1 / %2 页 · %3 条")
             .arg(page.currentPage)
             .arg(page.totalPages)
             .arg(page.totalRecords)
@@ -1031,6 +1068,7 @@ void MainWidget::init_workers()
         auto recorder = record_tasks_[i];
         connect(monitor_tasks_[i], &MonitorTask::frameReady, recorder,
                 [this, i, recorder](const cv::Mat &frame, int) {
+            if (!recording_enabled_) return;
             if (recording_mailboxes_[i].publish(frame)) {
                 QMetaObject::invokeMethod(recorder, [this, i, recorder] {
                     const cv::Mat latest = recording_mailboxes_[i].take();
@@ -1048,6 +1086,12 @@ void MainWidget::init_workers()
                 Qt::QueuedConnection);
         connect(monitor_tasks_[i], &MonitorTask::personDetected,
                 this, &MainWidget::on_person_detected, Qt::QueuedConnection);
+        connect(monitor_tasks_[i], &MonitorTask::detectionCycleCompleted,
+                this, [this](int channel, qint64 elapsed) {
+            // 关闭开关时，已进入 GUI 队列的旧统计也不能再对外发布。
+            if (!shutting_down_workers_ && detection_allowed_ && detection_enabled_value_)
+                emit detectionCycleCompleted(channel, elapsed);
+        }, Qt::QueuedConnection);
         connect(monitor_tasks_[i], &MonitorTask::detectionMessage,
                 this, &MainWidget::on_detection_message, Qt::QueuedConnection);
         connect(record_tasks_[i], &RecordTask::segmentStarted,
@@ -1152,7 +1196,7 @@ void MainWidget::load_system_settings()
     record_directory_edit_->setText(record_directory_);
     int segmentRow = record_segment_seconds_->findData(record_segment_seconds_value_);
     if (segmentRow >= 0) record_segment_seconds_->setCurrentIndex(segmentRow);
-    detection_enabled_box_->setChecked(detection_enabled_value_);
+    detection_enabled_box_->setChecked(detection_allowed_ && detection_enabled_value_);
     yolo_model_edit_->setText(yolo_model_path_);
     detection_confidence_spin_->setValue(detection_confidence_value_);
 }
@@ -1181,7 +1225,7 @@ void MainWidget::save_recording_settings()
     SystemConfig config;QString error;
     if(!service.load(config,error)){QMessageBox::warning(this,"配置读取失败",error);return;}
     config.videoDirectory=path;config.imageDirectory=image_directory_edit_->text().trimmed();
-    config.segmentSeconds=seconds;config.captureIntervalMs=capture_interval_spin_->value();
+    config.segmentSeconds=seconds; // 保留旧配置字段，仅兼容数据库，不再控制采集调度。
     if(!service.save(config,error)){QMessageBox::warning(this,"配置保存失败",error);return;}
     image_directory_=QDir(config.imageDirectory).absolutePath();
     capture_interval_value_ = config.captureIntervalMs;
@@ -1243,7 +1287,7 @@ void MainWidget::save_detection_settings()
 void MainWidget::on_source_ready(int channelId, double fps)
 {
     if (shutting_down_workers_ || channelId < 1 || channelId > 4) return;
-    if (!record_tasks_[channelId - 1]) return;
+    if (!recording_enabled_ || !record_tasks_[channelId - 1]) return;
     RecordTask *task = record_tasks_[channelId - 1];
     const QString directory = record_directory_;
     const int seconds = record_segment_seconds_value_;
@@ -1290,7 +1334,7 @@ void MainWidget::on_segment_started(int channelId, const QString &path)
 void MainWidget::on_person_detected(int channelId,const QString &eventKey,const QDateTime &eventTime,double confidence)
 {
     Q_UNUSED(eventTime);
-    if(shutting_down_workers_ || !detection_enabled_value_ || channelId<1 || channelId>4)return;
+    if(shutting_down_workers_ || !recording_enabled_ || !detection_allowed_ || !detection_enabled_value_ || channelId<1 || channelId>4)return;
     auto task=record_tasks_[channelId-1];
     if(!task)return;
     QMetaObject::invokeMethod(task,[task,eventKey,confidence]{task->beginEvent(eventKey,confidence);},Qt::QueuedConnection);
@@ -1299,6 +1343,7 @@ void MainWidget::on_person_detected(int channelId,const QString &eventKey,const 
 // 展示模型加载/运行状态；检测不可用不等同于采集必然失败。
 void MainWidget::on_detection_message(int channelId, const QString &message)
 {
+    if (!detection_allowed_ || !detection_enabled_value_) return;
     qInfo().noquote() << QStringLiteral("通道 %1：%2").arg(channelId).arg(message);
     lab_storage_warning->setText(message);
 }
@@ -1522,7 +1567,7 @@ void MainWidget::start_channel(int index)
             task->startCapture(config);
         },
         Qt::QueuedConnection);
-    const bool detectionEnabled = detection_enabled_value_;
+    const bool detectionEnabled = detection_allowed_ && detection_enabled_value_;
     const QString modelPath = yolo_model_path_;
     const double confidence = detection_confidence_value_;
     QMetaObject::invokeMethod(task,
@@ -1559,6 +1604,7 @@ void MainWidget::display_frame(const cv::Mat &frame, int channelId)
     // 缩小之后再创建 QPixmap，减少全尺寸转换与拷贝。
     target->setPixmap(QPixmap::fromImage(image.scaled(
         target->size(), Qt::KeepAspectRatio, Qt::FastTransformation)));
+    emit previewFramePresented(channelId);
 }
 
 // 显示对应通道的具体采集错误，并更新列表状态。
@@ -1613,7 +1659,6 @@ void MainWidget::init_management_pages()
     }
     record_segment_seconds_->setCurrentIndex(row);
     image_directory_edit_->setText(image_directory_);
-    capture_interval_spin_->setValue(config.captureIntervalMs);
     image_page_=new ImagePage(DbConn::getInstance()->database(),image_directory_);
     log_page_=new OperationLogPage(DbConn::getInstance()->database());
     page_stack->addWidget(image_page_);page_stack->addWidget(log_page_);
@@ -1704,9 +1749,10 @@ void MainWidget::init_management_pages()
 void MainWidget::update_management_access()
 {
     const bool allowed=auth_session.isLoggedIn();
-    for (auto button : {images_button_, logs_button_, btn_start_preview, btn_stop_preview,
+    for (auto button : {images_button_, logs_button_,
                         btn_playback_page, btn_setting_page, btn_one, btn_four})
         if (button) button->setEnabled(allowed);
+    detection_enabled_box_->setEnabled(allowed && detection_allowed_);
     if (auto snapshot = findChild<QPushButton*>("previewSnapshotButton")) snapshot->setEnabled(allowed);
     page_stack->widget(1)->setEnabled(allowed);
     page_stack->widget(2)->setEnabled(allowed);
@@ -1763,12 +1809,12 @@ void MainWidget::take_preview_snapshot()
     audit("截图",saved.imagePath);lab_storage_warning->setText("截图已保存到图片管理");
 }
 
-// 只对单画面选中通道启用检测，把配置变更排队到各采集线程。
+// 把全局开关和模型参数同步到所有通道，布局与选中项不改变检测范围。
 void MainWidget::apply_detection_mode()
 {
     for(int i=0;i<4;++i){
         auto task=monitor_tasks_[i];if(!task)continue;
-        const bool enabled=detection_enabled_value_;
+        const bool enabled=detection_allowed_ && detection_enabled_value_;
         const QString path=yolo_model_path_;const double confidence=detection_confidence_value_;
         QMetaObject::invokeMethod(task,[task,enabled,path,confidence]{task->configureDetection(enabled,path,confidence);},Qt::QueuedConnection);
     }

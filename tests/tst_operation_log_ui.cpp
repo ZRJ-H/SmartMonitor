@@ -37,6 +37,21 @@ private slots:
     }
     void cleanup() {db.close();db=QSqlDatabase();QSqlDatabase::removeDatabase(connection);}
 
+    void selectingEventPlaysAndReloadDoesNotPlayStaleSelection() {
+        QSqlQuery q(db);
+        QVERIFY(q.exec("INSERT INTO exception_log VALUES(1,2,'2026-09-24T12:00:00','complete','event.mp4')"));
+        QVERIFY(q.exec("INSERT INTO video VALUES(33,'event.mp4')"));
+        QVERIFY(q.exec("INSERT INTO event_media_link VALUES(1,33)"));
+        OperationLogPage page(db);page.show();
+        QSignalSpy spy(&page,&OperationLogPage::playbackRequested);
+        page.findChild<QTabWidget*>()->setCurrentIndex(1);
+        auto events=page.findChild<QTableWidget*>("eventLogTable");QVERIFY(events);
+        QCOMPARE(events->rowCount(),1);QCOMPARE(spy.count(),0);
+        events->setCurrentCell(0,0);QCOMPARE(spy.count(),1);QCOMPARE(spy.first()[0].toLongLong(),qint64(33));
+        QVERIFY(!events->item(0,0)->toolTip().isEmpty());
+        page.reload();QCOMPARE(spy.count(),1);
+        QVERIFY(!page.findChild<QDialog*>("operationLogDetailsDialog"));
+    }
     void buttonShowsFullPlainTextAndCopiesIt() {
         const QString description="C:/监控记录/"+QString("very-long-path/").repeated(40)+"录像.mp4\n<b>原样显示</b>\n第二行详情";
         const auto id=insertLog(description);QVERIFY(id>0);

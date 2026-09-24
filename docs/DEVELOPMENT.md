@@ -84,3 +84,8 @@ SQL 备份含配置和媒体索引，不含视频、图片、ONNX 文件本体�
     ./scripts/deploy-runtime.ps1 -OutputDir ./bin -CleanStart
 
 双击 bin/day20_smart_monitor.exe 时需保留整个 bin 目录（DLL、platforms、sqldrivers、multimedia、qt.conf），不要只移动 EXE。发布请使用 package-release.ps1 生成的完整目录。
+
+
+## 评审整改工作流
+
+运行 ./scripts/verify-review.ps1 执行包含真实 YOLO 的完整回归和界面截图。运行模式可用 ./scripts/run-dev.ps1 -Pipeline preview、record、full 分离负载；每次先退出旧进程。详见 [评审整改记录](verification/review-remediation-2026-09-24.md)。

@@ -20,6 +20,8 @@
 #include "../view/mainwidget.h"
 
 #include <QLabel>
+#include <QCheckBox>
+#include <QDateTimeEdit>
 #include <QLineEdit>
 #include <QListWidget>
 #include <QPushButton>
@@ -72,12 +74,132 @@ class Day3MainWidgetTests : public QObject
 
 private slots:
 
+
+    void fourDifferentFilesLayeredPerformance_data() {
+        QTest::addColumn<QString>("mode");QTest::addColumn<int>("width");
+        for(int width:{640,1920}) for(const QString &mode:{QString("preview"),QString("record"),QString("full")}) {
+            if(mode=="full" && qEnvironmentVariable("SMART_MONITOR_TEST_MODEL").isEmpty())continue;
+            QTest::newRow(qPrintable(QString("%1-%2").arg(mode).arg(width)))<<mode<<width;
+        }
+    }
+    void fourDifferentFilesLayeredPerformance() {
+        QFETCH(QString,mode);QFETCH(int,width);const int height=width*9/16;
+        QTemporaryDir directory;QVERIFY(directory.isValid());
+        const QByteArray previousMode=qgetenv("SMART_MONITOR_PIPELINE");
+        const auto cleanup=qScopeGuard([&]{
+            if(previousMode.isNull())qunsetenv("SMART_MONITOR_PIPELINE");else qputenv("SMART_MONITOR_PIPELINE",previousMode);
+            clearBackgroundTestData();
+        });
+        qputenv("SMART_MONITOR_PIPELINE",mode.toUtf8());
+        QString error;QVERIFY2(prepareBackgroundSources(directory,error),qPrintable(error));
+        auto channels=ChannelConfigPolicy::defaults();
+        for(auto &channel:channels) {
+            channel.sourceType=ChannelSourceType::File;
+            channel.filePath=directory.filePath(QString("source-%1.avi").arg(channel.channelId));
+            cv::VideoWriter writer(channel.filePath.toStdString(),cv::VideoWriter::fourcc('M','J','P','G'),25,cv::Size(width,height));
+            QVERIFY(writer.isOpened());
+            for(int i=0;i<90;++i)writer.write(cv::Mat(height,width,CV_8UC3,cv::Scalar(channel.channelId*40,i%200,60)));
+        }
+        ChannelConfigService service;QVERIFY2(service.save(channels,error),qPrintable(error));
+        ConfigModel config;
+        QVERIFY(config.upsertValue("detection.enabled","0"));
+        if(mode=="full") {
+            const QString model=qEnvironmentVariable("SMART_MONITOR_TEST_MODEL");
+            QVERIFY(QFileInfo::exists(model));
+            QVERIFY(config.upsertValue("detection.model_path",model));
+        }
+        int frames[4]={};int inferred[4]={};int cycles=0;qint64 inferenceMs=0; qint64 maxHeartbeatGap=0;
+        {
+            MainWidget widget;widget.resize(1280,760);widget.show();widget.setLoggedInUser(17,"admin17");
+            connect(&widget,&MainWidget::previewFramePresented,[&](int channel){++frames[channel-1];});
+            connect(&widget,&MainWidget::detectionCycleCompleted,[&](int channel,qint64 ms){++cycles;++inferred[channel-1];inferenceMs+=ms;});
+            if(mode=="full") {
+                auto toggle=widget.findChild<QCheckBox*>("globalDetectionSwitch");QVERIFY(toggle);
+                toggle->click();QVERIFY(toggle->isChecked());
+                QString saved;bool found=false;QVERIFY(config.findValue("detection.enabled",saved,found));
+                QVERIFY(found);QCOMPARE(saved,QString("1"));
+            }
+            QVERIFY(QMetaObject::invokeMethod(&widget,"start_configured_previews"));
+            QTest::qWait(1500);
+            for(auto &frame:frames)frame=0;
+            QElapsedTimer elapsed;elapsed.start();qint64 lastBeat=0;
+            QTimer heartbeat;heartbeat.setInterval(20);
+            connect(&heartbeat,&QTimer::timeout,[&]{auto now=elapsed.elapsed();maxHeartbeatGap=qMax(maxHeartbeatGap,now-lastBeat);lastBeat=now;});
+            heartbeat.start();QTest::qWait(4000);heartbeat.stop();
+            for(int channel=0;channel<4;++channel) {
+                qInfo().noquote()<<QString("LAYER %1 channel=%2 presented=%3 fps=%4").arg(mode).arg(channel+1).arg(frames[channel]).arg(frames[channel]*1000.0/elapsed.elapsed(),0,'f',1);
+                QVERIFY2(frames[channel]>=72,"Four-channel preview must sustain at least 18 presented FPS on 25 FPS fixtures");
+            }
+            qInfo()<<"LAYER"<<mode<<"heartbeatMaxMs"<<maxHeartbeatGap<<"inferenceCycles"<<cycles<<"inferenceTotalMs"<<inferenceMs;
+            QVERIFY(maxHeartbeatGap<300);
+            if(mode=="full") {
+                for(int channel=0;channel<4;++channel)QVERIFY(inferred[channel]>0);
+                widget.findChild<QCheckBox*>("globalDetectionSwitch")->click();
+                const int stoppedCycles=cycles;QTest::qWait(600);QCOMPARE(cycles,stoppedCycles);
+                QString saved;bool found=false;QVERIFY(config.findValue("detection.enabled",saved,found));QCOMPARE(saved,QString("0"));
+            }
+            const auto capture=qEnvironmentVariable("SMART_MONITOR_UI_CAPTURE_DIR");
+            if(!capture.isEmpty()){QDir().mkpath(capture);widget.grab().save(QDir(capture).filePath(QString("four-%1-%2.png").arg(mode).arg(width)));}
+        }
+        const auto recordings=QDir(directory.filePath("recordings")).entryList({"*.mp4"},QDir::Files);
+        QCOMPARE(recordings.size(),mode=="preview"?0:4);
+        for(const auto &name:recordings) {
+            cv::VideoCapture saved(directory.filePath("recordings/"+name).toStdString(),cv::CAP_FFMPEG,{cv::CAP_PROP_N_THREADS,2});
+            QVERIFY(saved.isOpened());cv::Mat frame;int count=0;while(saved.read(frame))++count;
+            QVERIFY(count>=40); // 真实解码约 5.5 秒录像，补帧不能产生零长文件。
+        }
+    }
+    void eventSelectionStartsPlaybackWithoutDetails() {
+        QTemporaryDir dir;const QString path=dir.filePath("event.avi");
+        cv::VideoWriter writer(path.toStdString(),cv::VideoWriter::fourcc('M','J','P','G'),25,cv::Size(64,48));
+        QVERIFY(writer.isOpened());for(int i=0;i<50;++i)writer.write(cv::Mat(48,64,CV_8UC3,cv::Scalar(20,40,80)));writer.release();
+        QSqlQuery query(DbConn::getInstance()->database());
+        const auto cleanup=qScopeGuard([&]{query.exec("DELETE FROM monitor_event WHERE event_key='selection-event'");query.exec("DELETE FROM video WHERE id=66001");});
+        query.prepare("INSERT INTO video(id,video_name,video_path,channel_id,start_time,end_time,file_size,video_type) VALUES(66001,'event',:path,1,:start,:end,100,'event')");
+        query.bindValue(":path",path);query.bindValue(":start",QDateTime::currentDateTime().addSecs(-10));query.bindValue(":end",QDateTime::currentDateTime());QVERIFY(query.exec());
+        VideoModel eventModel;QVERIFY(eventModel.createEvent("selection-event",1,QDateTime::currentDateTime(),path,0.9));
+        MainWidget widget;widget.setLoggedInUser(17,"admin17");widget.show();
+        QVERIFY(QMetaObject::invokeMethod(&widget,"show_playback_page"));
+        auto list=widget.findChild<QListWidget*>("recordList");QVERIFY(list);
+        QListWidgetItem *event=nullptr;
+        for(int i=0;i<list->count();++i)if(list->item(i)->data(Qt::UserRole+1).toInt()==66001)event=list->item(i);
+        QVERIFY(event);QVERIFY(event->data(Qt::UserRole+2).toBool());QVERIFY(!event->toolTip().isEmpty());
+        list->setCurrentItem(event);
+        auto player=widget.findChild<QMediaPlayer*>();QVERIFY(player);
+        QTRY_COMPARE_WITH_TIMEOUT(player->source(),QUrl::fromLocalFile(path),2000);
+        QTRY_COMPARE_WITH_TIMEOUT(player->playbackState(),QMediaPlayer::PlayingState,2000);
+    }
+    void reviewedLayoutAndGlobalSwitch_data() {
+        QTest::addColumn<int>("windowWidth");
+        QTest::newRow("1280")<<1280;QTest::newRow("1600")<<1600;
+    }
+    void reviewedLayoutAndGlobalSwitch() {
+        QFETCH(int,windowWidth);
+        MainWidget widget;widget.setLoggedInUser(17,"admin17");widget.resize(windowWidth,760);widget.show();
+        QTest::qWait(50);
+        auto toggle=widget.findChild<QCheckBox*>("globalDetectionSwitch");
+        QVERIFY(toggle);QVERIFY(toggle->isVisible());QVERIFY(toggle->isEnabled());
+        auto left=widget.findChild<QWidget*>("devicePanel");
+        auto right=widget.findChild<QWidget*>("monitorPanel");
+        const double previewRatio=double(left->width())/(left->width()+right->width());
+        QVERIFY2(previewRatio>=.20 && previewRatio<=.30,qPrintable(QString::number(previewRatio)));
+        QVERIFY(QMetaObject::invokeMethod(&widget,"show_playback_page"));QTest::qWait(50);
+        left=widget.findChild<QWidget*>("recordFilterPanel");
+        right=widget.findChild<QWidget*>("playbackDisplayPanel");
+        const double playbackRatio=double(left->width())/(left->width()+right->width());
+        QVERIFY2(playbackRatio>=.20 && playbackRatio<=.305,qPrintable(QString::number(playbackRatio)));
+        auto start=widget.findChild<QDateTimeEdit*>("playbackStartTime");
+        auto end=widget.findChild<QDateTimeEdit*>("playbackEndTime");
+        QVERIFY(start->mapTo(&widget,QPoint()).y()<end->mapTo(&widget,QPoint()).y());
+        auto capture=qEnvironmentVariable("SMART_MONITOR_UI_CAPTURE_DIR");
+        if(!capture.isEmpty()) {QDir().mkpath(capture);widget.grab().save(QDir(capture).filePath("review-playback.png"));}
+    }
     void guestStartsBackgroundWorkersAndRejectsFrames() {
         MainWidget widget;widget.show();QTest::qWait(20);
         const auto workers = widget.findChildren<QThread*>();
         QCOMPARE(workers.size(),8);
         for(auto thread:workers) QVERIFY(thread->isRunning());
-        QVERIFY(!widget.findChild<QPushButton*>("startPreviewButton")->isEnabled());
+        QVERIFY(!widget.findChild<QPushButton*>("startPreviewButton"));
         cv::Mat frame(120,160,CV_8UC3,cv::Scalar(0,200,0));
         QVERIFY(QMetaObject::invokeMethod(&widget,"display_frame",Q_ARG(cv::Mat,frame),Q_ARG(int,1)));
         for(auto label:widget.findChildren<QLabel*>("videoWindow")) QVERIFY(label->pixmap().isNull());
@@ -163,7 +285,7 @@ private slots:
             widget.show();
             const auto workers=widget.findChildren<QThread*>();
             QCOMPARE(workers.size(),8);
-            QVERIFY(!widget.findChild<QPushButton*>("startPreviewButton")->isEnabled());
+            QVERIFY(!widget.findChild<QPushButton*>("startPreviewButton"));
             const QDir recordings(directory.filePath("recordings"));
             QTRY_COMPARE_WITH_TIMEOUT(recordings.entryList({"*.mp4"},QDir::Files).size(),4,4000);
             for(int sample=0;sample<7;++sample) {
@@ -392,6 +514,7 @@ private slots:
     }
 
     void initTestCase() {
+        cv::setNumThreads(qBound(1,QThread::idealThreadCount(),4)); // 与 main.cpp 一致。
         QStandardPaths::setTestModeEnabled(true);
         QFontDatabase::addApplicationFont("C:/Windows/Fonts/msyh.ttc");
         QVERIFY(initializeTestDatabase());
@@ -437,9 +560,9 @@ void Day3MainWidgetTests::channelControlsAndFourConfigRowsArePresent()
     QCOMPARE(deviceList->count(), 4);
 
     QVERIFY(widget.findChild<QPushButton *>(
-                QStringLiteral("startPreviewButton")) != nullptr);
+                QStringLiteral("startPreviewButton")) == nullptr);
     QVERIFY(widget.findChild<QPushButton *>(
-                QStringLiteral("stopPreviewButton")) != nullptr);
+                QStringLiteral("stopPreviewButton")) == nullptr);
     QVERIFY(widget.findChild<QPushButton *>(
                 QStringLiteral("refreshCamerasButton")) != nullptr);
     QVERIFY(widget.findChild<QPushButton *>(

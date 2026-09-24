@@ -73,6 +73,26 @@ private slots:
         task.startCapture(config);QTRY_VERIFY_WITH_TIMEOUT(frames.count()>stopped,1000);task.stopCapture();
     }
 
+
+    // 回归：25 FPS 文件应按源帧率输出，而不是被内部 12 FPS 上限截断。
+    void fileUsesSourceRateWithoutAccumulatingProcessingDelay() {
+        QTemporaryDir dir;
+        auto path=dir.filePath("cadence.avi");
+        cv::VideoWriter writer(path.toStdString(),cv::VideoWriter::fourcc('M','J','P','G'),25,cv::Size(64,48));
+        QVERIFY(writer.isOpened());
+        for(int i=0;i<100;++i) writer.write(cv::Mat(48,64,CV_8UC3,cv::Scalar(i,40,80)));
+        writer.release();
+        ChannelConfig config;config.channelId=1;config.sourceType=ChannelSourceType::File;config.filePath=path;
+        MonitorTask task;
+        QSignalSpy ready(&task,&MonitorTask::sourceReady);
+        int frames=0;
+        connect(&task,&MonitorTask::frameReady,this,[&]{++frames;QThread::msleep(8);});
+        task.startCapture(config);
+        QCOMPARE(ready.first()[1].toDouble(),25.0);
+        QTest::qWait(1600);task.stopCapture();
+        QVERIFY2(frames>=32,qPrintable(QString("Expected >=32 frames, got %1").arg(frames)));
+        QVERIFY(frames<=44);
+    }
     // 验证本地视频到达末帧后会回到开头继续发送画面。
     void fileSourceLoopsAfterLastFrame();
     void mp4FileSourceCanBeOpened();
@@ -154,7 +174,7 @@ void Day3MonitorTaskTests::mp4FileSourceCanBeOpened()
     QSignalSpy ready(&task, &MonitorTask::sourceReady);
     task.startCapture(config);
     QCOMPARE(ready.count(), 1);
-    QCOMPARE(ready.first().at(1).toDouble(), 2.0);
+    QCOMPARE(ready.first().at(1).toDouble(), 20.0); // 旧采集间隔配置不再覆盖文件 FPS。
     QTRY_VERIFY_WITH_TIMEOUT(frameSpy.count() >= 1, 1500);
     QCOMPARE(errorSpy.count(), 0);
     task.stopCapture();

@@ -31,6 +31,7 @@ int main(int argc, char *argv[])
             if (!valid) return 3;
         }
         qInfo("RUNTIME_DRIVERS_OK");
+        return 0; // 检查成功即退出，不能继续进入业务窗口和自动采集。
     }
     if (smoke) {
         qputenv("SMART_MONITOR_AUTOSTART", "0");
