@@ -1,3 +1,6 @@
+// 【阅读导引】
+// 录像段状态：管理时长、命名和起止信息，生成 Video 元数据；不实际编码视频。
+
 #ifndef RECORDINGSEGMENT_H
 #define RECORDINGSEGMENT_H
 

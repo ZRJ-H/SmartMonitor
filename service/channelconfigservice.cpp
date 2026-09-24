@@ -1,3 +1,6 @@
+// 【阅读导引】
+// 通道配置用例：加载默认值与已存 JSON；保存四路配置时用同一事务避免部分更新。
+
 // 实现通道配置的默认值合并、JSON 转换及数据库事务读写流程。
 #include "channelconfigservice.h"
 #include "channelconfigpolicy.h"
@@ -14,6 +17,7 @@ QString configKey(int channelId)
 }
 }
 
+// 先创建四路默认配置，再逐项解码数据库 JSON，最后校验整组资源分配。
 bool ChannelConfigService::load(QList<ChannelConfig> &configs,
                                 QString &errorText)
 {
@@ -46,6 +50,7 @@ bool ChannelConfigService::load(QList<ChannelConfig> &configs,
     return ChannelConfigPolicy::validateAssignments(configs, errorText);
 }
 
+// 校验整组配置后开启事务；四个通道任一写入失败都回滚。
 bool ChannelConfigService::save(const QList<ChannelConfig> &configs,
                                 QString &errorText)
 {

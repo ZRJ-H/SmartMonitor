@@ -1,3 +1,6 @@
+// 【阅读导引】
+// 验证码自绘控件：维护验证码字符串，paintEvent 绘制字符/干扰，鼠标释放时刷新。
+
 // 实现验证码字符随机生成、抗干扰绘制以及鼠标点击刷新。
 #include "verifycodelabel.h"
 
@@ -8,6 +11,7 @@
 #include <QRandomGenerator>
 #include <QtGlobal>
 
+// 构造对象并初始化所需成员；冒号后的初始化列表先于函数体执行。
 VerifyCodeLabel::VerifyCodeLabel(QWidget *parent)
     : QLabel(parent),
       letter_number(4),
@@ -21,12 +25,14 @@ VerifyCodeLabel::VerifyCodeLabel(QWidget *parent)
     produceVerificationCode();
 }
 
+// 返回当前验证码供登录界面比较；绘制与校验使用同一个字符串。
 QString VerifyCodeLabel::getVerificationCode() const
 {
     // 登录窗口使用不区分大小写的比较；这里转成大写让接口含义更明确。
     return verification_code.toUpper();
 }
 
+// 重新生成验证码并请求重绘，update 是安排绘制而非立即调用 paintEvent。
 void VerifyCodeLabel::updateVerificationCode()
 {
     produceVerificationCode();
@@ -35,6 +41,7 @@ void VerifyCodeLabel::updateVerificationCode()
     update();
 }
 
+// 生成新的验证码字符组合，具体字符集合和长度以函数实现为准。
 void VerifyCodeLabel::produceVerificationCode()
 {
     verification_code.clear();
@@ -64,6 +71,7 @@ void VerifyCodeLabel::produceVerificationCode()
     }
 }
 
+// 在控件收到绘制事件时画背景、字符与干扰，不在其他线程操作 QPainter。
 void VerifyCodeLabel::paintEvent(QPaintEvent *event)
 {
     // 本案例完全自行绘制 QLabel，不需要使用 event 参数。
@@ -138,6 +146,7 @@ void VerifyCodeLabel::paintEvent(QPaintEvent *event)
     painter.drawRect(rect().adjusted(0, 0, -1, -1));
 }
 
+// 响应鼠标释放刷新验证码，再按源码要求保留基类事件行为。
 void VerifyCodeLabel::mouseReleaseEvent(QMouseEvent *event)
 {
     // 只在释放鼠标左键时刷新验证码。

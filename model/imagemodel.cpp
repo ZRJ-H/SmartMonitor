@@ -1,3 +1,7 @@
+// 【阅读导引】
+// 图片持久化：在 feature_image 表中查询/写入元数据，不读写 JPG 像素文件。
+// 页码从 1 开始；时间加 ID 的稳定排序避免同时间记录在翻页时顺序不明确。
+
 #include "imagemodel.h"
 
 #include <QSqlError>
@@ -28,11 +32,13 @@ void bindIds(QSqlQuery &query, const QList<qint64> &ids)
 }
 }
 
+// 构造对象并初始化所需成员；冒号后的初始化列表先于函数体执行。
 ImageModel::ImageModel(const QSqlDatabase &database)
     : db(database)
 {
 }
 
+// 保存图片元数据并回填自增 ID；无关联的 ID 转为空值，满足数据库外键语义。
 bool ImageModel::insert(FeatureImage &image, QString &errorText)
 {
     errorText.clear();
@@ -57,6 +63,7 @@ bool ImageModel::insert(FeatureImage &image, QString &errorText)
     return true;
 }
 
+// 按非空条件绑定参数并稳定排序；offset 由从 1 开始的页码计算。
 bool ImageModel::query(const ImageFilter &filter, int page, int pageSize,
                        QList<FeatureImage> &images, QString &errorText) const
 {
@@ -95,6 +102,7 @@ bool ImageModel::query(const ImageFilter &filter, int page, int pageSize,
     return true;
 }
 
+// 为每个 ID 建立独立绑定占位符，读取导出/删除需要的完整记录。
 bool ImageModel::findByIds(const QList<qint64> &ids, QList<FeatureImage> &images,
                            QString &errorText) const
 {
@@ -113,6 +121,7 @@ bool ImageModel::findByIds(const QList<qint64> &ids, QList<FeatureImage> &images
     return true;
 }
 
+// 统计事件已有图片数量，供业务判断重复保存。
 bool ImageModel::countForException(qint64 exceptionId, int &count,
                                    QString &errorText) const
 {
@@ -133,6 +142,7 @@ bool ImageModel::countForException(qint64 exceptionId, int &count,
     return true;
 }
 
+// 仅删除指定 ID 的数据库记录；文件补偿和事务边界由调用方处理。
 bool ImageModel::removeByIds(const QList<qint64> &ids, QString &errorText)
 {
     errorText.clear();
@@ -148,6 +158,7 @@ bool ImageModel::removeByIds(const QList<qint64> &ids, QString &errorText)
     return true;
 }
 
+// 按固定查询列次序把当前行转换成 FeatureImage，列次序修改时需一起调整。
 FeatureImage ImageModel::fromQuery(const QSqlQuery &query)
 {
     FeatureImage image;

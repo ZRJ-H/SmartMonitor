@@ -1,3 +1,6 @@
+// 【阅读导引】
+// 通道纯规则：生成默认配置、校验资源分配、转换 JSON；IO 启停由 MonitorTask 执行。
+
 // 声明四路监控通道的默认配置、业务校验和 JSON 持久化格式。
 #ifndef CHANNELCONFIGPOLICY_H
 #define CHANNELCONFIGPOLICY_H

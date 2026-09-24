@@ -1,3 +1,7 @@
+// 【阅读导引】
+// 已封口媒体恢复：先原子落盘待办，再尝试入库；成功才删待办，失败可在以后重放。
+// 恢复范围不包含尚未封口且没有清单的损坏视频；数据库句柄仍需在所属线程使用。
+
 #ifndef MEDIARECOVERYSERVICE_H
 #define MEDIARECOVERYSERVICE_H
 #include "../model/video.h"

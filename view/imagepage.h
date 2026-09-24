@@ -1,3 +1,7 @@
+// 【阅读导引】
+// 图片管理界面：维护筛选、九宫格、选中状态和大图查看器；文件/SQL 操作委托 ImageService。
+// 关联回放仅发出 videoId 与偏移，播放器由主窗口持有。
+
 #ifndef IMAGEPAGE_H
 #define IMAGEPAGE_H
 

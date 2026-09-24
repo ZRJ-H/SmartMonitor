@@ -1,3 +1,6 @@
+// 【阅读导引】
+// 应用入口：设置运行环境、建立窗口并进入 Qt 事件循环；窗口释放后才移除数据库连接。
+
 // 程序入口：创建 Qt 应用，启动窗口管理器，并在事件循环结束后依次释放界面与数据库资源。
 #include "manager/windowmanager.h"
 #include "util/dbconn.h"

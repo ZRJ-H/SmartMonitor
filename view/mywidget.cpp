@@ -1,3 +1,6 @@
+// 【阅读导引】
+// 保留的信号槽教学窗口：演示旧式 SIGNAL/SLOT 与确认关闭，不是实际业务主窗口。
+
 // 实现信号槽教学窗口：按钮触发确认对话框，用户确认后关闭窗口。
 #include "mywidget.h"
 
@@ -6,6 +9,7 @@
 #include <QPushButton>
 #include <QVBoxLayout>
 
+// 构造对象并初始化所需成员；冒号后的初始化列表先于函数体执行。
 MyWidget::MyWidget(QWidget *parent)
     : QWidget(parent)
 {
@@ -28,6 +32,7 @@ MyWidget::MyWidget(QWidget *parent)
             this, SLOT(myClose()));
 }
 
+// 等待确认对话框结果，只有 Yes 才关闭这个教学窗口。
 void MyWidget::myClose()
 {
     // warning() 会阻塞在这里等待用户选择 Yes 或 No，并返回所选按钮。

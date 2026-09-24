@@ -1,3 +1,6 @@
+// 【阅读导引】
+// 通道纯规则：生成默认配置、校验资源分配、转换 JSON；IO 启停由 MonitorTask 执行。
+
 // 实现通道默认值、重复资源检测、启动前校验及 JSON 编解码规则。
 #include "channelconfigpolicy.h"
 
@@ -5,6 +8,7 @@
 #include <QJsonObject>
 #include <QSet>
 
+// 生成四路默认值：第一路摄像头 0，其余文件源等待用户选择。
 QList<ChannelConfig> ChannelConfigPolicy::defaults()
 {
     // 首次运行时默认让通道 1 使用摄像头，其余通道等待选择视频文件。
@@ -22,6 +26,7 @@ QList<ChannelConfig> ChannelConfigPolicy::defaults()
     return configs;
 }
 
+// 检查四个编号互不重复、名称非空、摄像头编号有效且未被多路占用。
 bool ChannelConfigPolicy::validateAssignments(
         const QList<ChannelConfig> &configs,
         QString &errorText)
@@ -66,6 +71,7 @@ bool ChannelConfigPolicy::validateAssignments(
     return true;
 }
 
+// 只验证当前来源所需字段，真实设备和文件能否打开由 MonitorTask 判定。
 bool ChannelConfigPolicy::validateForStart(const ChannelConfig &config,
                                             QString &errorText)
 {
@@ -86,6 +92,7 @@ bool ChannelConfigPolicy::validateForStart(const ChannelConfig &config,
     return true;
 }
 
+// 把通道完整字段序列化成紧凑 JSON，作为 sys_config 的字符串值。
 QString ChannelConfigPolicy::encode(const ChannelConfig &config)
 {
     // 每个通道编码为紧凑 JSON，再作为 sys_config 的字符串值保存。
@@ -101,6 +108,7 @@ QString ChannelConfigPolicy::encode(const ChannelConfig &config)
     return QString::fromUtf8(QJsonDocument(object).toJson(QJsonDocument::Compact));
 }
 
+// 先解析并校验临时对象，成功后覆盖输出，避免坏 JSON 留下半套配置。
 bool ChannelConfigPolicy::decode(const QString &json,
                                  ChannelConfig &config,
                                  QString &errorText)

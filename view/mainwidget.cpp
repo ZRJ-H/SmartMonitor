@@ -1,3 +1,8 @@
+// 【阅读导引】
+// 主界面协调：连接登录、通道、录像、图片、日志、恢复和备份；控件只能在 GUI 线程操作。
+// 先读 init_workers/start_channel，再沿帧信号读采集与录像，最后读封口后的保存链。
+// 当前预览和录像都经过 LatestFrameBuffer；慢消费会覆盖旧帧，不保证逐帧无损录制。
+
 // 实现主窗口布局、权限控制、录像分页、通道配置以及四路视频采集线程与画面显示。
 #include "mainwidget.h"
 #include "apptheme.h"
@@ -80,6 +85,7 @@ QImage frameImage(const cv::Mat &frame)
 }
 
 
+// 构造对象并初始化所需成员；冒号后的初始化列表先于函数体执行。
 MainWidget::MainWidget(QWidget *parent)
     : QWidget(parent),
       btn_monitor_page(nullptr),
@@ -175,6 +181,7 @@ MainWidget::MainWidget(QWidget *parent)
         QTimer::singleShot(0, this, &MainWidget::start_configured_previews);
 }
 
+// 对象销毁时释放本类负责的资源；依赖的外部对象需按约定保持有效。
 MainWidget::~MainWidget()
 {
     preview_delivery_enabled_.store(false);
@@ -182,6 +189,7 @@ MainWidget::~MainWidget()
     shutdown_workers();
 }
 
+// 创建控件和布局并保存成员指针；业务信号连接主要在 init_connect 中建立。
 void MainWidget::init_ui()
 {
     // 整个窗口采用垂直布局：上方导航栏，下方 QStackedWidget 页面区。
@@ -621,11 +629,13 @@ void MainWidget::init_ui()
     page_stack->setCurrentIndex(0);
 }
 
+// 应用统一主题；objectName 同时供 QSS 和 UI 测试定位控件使用。
 void MainWidget::init_style()
 {
     AppTheme::applyMain(this);
 }
 
+// 把按钮、选择变化与播放器状态连接到槽；这里只建立关系，不立即执行用户操作。
 void MainWidget::init_connect()
 {
     // 顶部导航：按钮只发出点击请求，三个槽决定显示 QStackedWidget 的哪个页面。
@@ -699,6 +709,7 @@ void MainWidget::init_connect()
     }
 }
 
+// 创建 GUI 定时器更新顶部时钟，与采集线程的定时器职责不同。
 void MainWidget::init_showtime()
 {
     m_timer = new QTimer(this);
@@ -711,12 +722,14 @@ void MainWidget::init_showtime()
     update_time();
 }
 
+// 切换到监控页，页面切换不等于重新创建采集任务。
 void MainWidget::show_monitor_page()
 {
     // 索引 0 对应第一个 addWidget() 加入的监控页面。
     page_stack->setCurrentIndex(0);
 }
 
+// 先检查回放权限，再切换页面并加载录像列表。
 void MainWidget::show_playback_page()
 {
     if (!require_permission(AuthPermission::Playback, "查看录像回放")) {
@@ -726,6 +739,7 @@ void MainWidget::show_playback_page()
     page_stack->setCurrentIndex(1);
 }
 
+// 检查设置权限后显示配置控件，不在切页时写配置。
 void MainWidget::show_setting_page()
 {
     if (!require_permission(AuthPermission::Settings, "修改系统设置")) {
@@ -735,6 +749,7 @@ void MainWidget::show_setting_page()
     page_stack->setCurrentIndex(2);
 }
 
+// 根据现有会话决定发起登录还是退出登录。
 void MainWidget::handle_login_button()
 {
     if (auth_session.isLoggedIn()) {
@@ -744,6 +759,7 @@ void MainWidget::handle_login_button()
     emit login_requested();
 }
 
+// 保存真实用户 ID，更新管理入口并恢复登录后的预览显示。
 void MainWidget::setLoggedInUser(int userId, const QString &userName)
 {
     if (userId < 1 || userName.trimmed().isEmpty()) return;
@@ -763,12 +779,14 @@ void MainWidget::setLoggedInUser(int userId, const QString &userName)
     load_video_records();
 }
 
+// 按当前筛选重新加载录像列表，交由分页服务校验条件。
 void MainWidget::load_video_records()
 {
     current_video_page = 1;
     load_video_page(current_video_page);
 }
 
+// 把控件值整理成 VideoQuery；查询条件对象本身不执行 SQL。
 VideoQuery MainWidget::current_video_query() const
 {
     VideoQuery query;
@@ -779,6 +797,7 @@ VideoQuery MainWidget::current_video_query() const
     return query;
 }
 
+// 加载成功才更新列表和页码；每个条目携带录像 ID，回放不靠猜文件名。
 bool MainWidget::load_video_page(int requestedPage)
 {
     if (!require_permission(AuthPermission::Playback, "查询录像记录")) {
@@ -817,6 +836,7 @@ bool MainWidget::load_video_page(int requestedPage)
     return true;
 }
 
+// 验证权限与选中项，然后按数据库 ID 打开关联录像。
 void MainWidget::play_selected_record()
 {
     if(!require_permission(AuthPermission::Playback,"播放录像"))return;
@@ -825,33 +845,41 @@ void MainWidget::play_selected_record()
     open_linked_video(item->data(Qt::UserRole+1).toLongLong(),0);
 }
 
+// 登录后暂停播放器，保留当前源与位置以便继续。
 void MainWidget::pause_playback() { if (auth_session.isLoggedIn()) playback_player_->pause(); }
+// 仅在登录且有有效录像记录时继续播放，避免退出后恢复旧源。
 void MainWidget::resume_playback() { if (auth_session.isLoggedIn() && current_playback_.id > 0) playback_player_->play(); }
+// 停止当前播放器；这与停止实时采集或录像线程无关。
 void MainWidget::stop_playback() { playback_player_->stop(); }
 
+// 读取组合框中的倍率并设置播放器播放速率，不改变文件编码 FPS。
 void MainWidget::change_playback_speed(int index)
 {
     Q_UNUSED(index);
     playback_player_->setPlaybackRate(playback_speed_->currentData().toDouble());
 }
 
+// 把毫秒位置换算为滑块比例；用户正在拖动时不抢占滑块。
 void MainWidget::update_playback_position(qint64 position)
 {
     if (!playback_slider_->isSliderDown() && playback_duration_ > 0)
         playback_slider_->setValue(static_cast<int>(position * 1000 / playback_duration_));
 }
 
+// 缓存播放器异步报告的时长，供进度显示与拖动定位使用。
 void MainWidget::update_playback_duration(qint64 duration)
 {
     playback_duration_ = duration;
 }
 
+// 把滑块比例换算成毫秒后请求定位；有有效时长才计算。
 void MainWidget::seek_playback(int value)
 {
     if (playback_duration_ > 0)
         playback_player_->setPosition(playback_duration_ * value / 1000);
 }
 
+// 从视频输出当前帧取图，保存真实录像 ID 与当前播放位置。
 void MainWidget::take_playback_snapshot()
 {
     if(!require_permission(AuthPermission::Playback,"保存回放截图"))return;
@@ -865,6 +893,7 @@ void MainWidget::take_playback_snapshot()
     audit("截图",saved.imagePath);lab_playback_status->setText("截图已保存到图片管理");
 }
 
+// 统一检查会话权限；失败时显示说明，由调用者立即返回。
 bool MainWidget::require_permission(AuthPermission permission,
                                     const QString &actionName)
 {
@@ -881,6 +910,7 @@ bool MainWidget::require_permission(AuthPermission permission,
     return false;
 }
 
+// 清除用户和回放状态、隐藏可见画面并回到登录流程；后台采集与录像继续。
 void MainWidget::logout()
 {
     audit("退出","管理员退出");
@@ -908,16 +938,19 @@ void MainWidget::logout()
     refresh_channel_list();
 }
 
+// 请求上一页；有效页码的边界由 load_video_page/VideoService 处理。
 void MainWidget::load_previous_video_page()
 {
     load_video_page(current_video_page - 1);
 }
 
+// 请求下一页，成功后才更新界面显示的当前页。
 void MainWidget::load_next_video_page()
 {
     load_video_page(current_video_page + 1);
 }
 
+// 刷新可读的当前日期时间，不用它衡量采集耗时。
 void MainWidget::update_time()
 {
     lab_time->setText(
@@ -925,6 +958,7 @@ void MainWidget::update_time()
     );
 }
 
+// 只显示选中通道并更新检测开关；切换布局不销毁其他通道任务。
 void MainWidget::show_single_window()
 {
     single_mode_=true;
@@ -942,6 +976,7 @@ void MainWidget::show_single_window()
     video_windows[index]->show();
 }
 
+// 恢复四宫格并关闭单画面检测条件；已有事件录像仍按自己的状态结束。
 void MainWidget::show_multi_window()
 {
     single_mode_=false;
@@ -957,6 +992,7 @@ void MainWidget::show_multi_window()
     }
 }
 
+// 创建每路采集/录像线程及对象，绑定生命周期和帧信箱；真正业务在各接收线程运行。
 void MainWidget::init_workers()
 {
     if (monitor_threads_[0] || shutting_down_workers_) return;
@@ -978,6 +1014,8 @@ void MainWidget::init_workers()
         connect(record_threads_[i], &QThread::finished,
                 record_tasks_[i], &QObject::deleteLater);
         // 每个消费者最多排队一条通知；慢消费者取最新帧，避免积压全尺寸图像。
+        // [this, i] 按值捕获通道下标并保存 this 指针；不复制窗口，也不延长窗口寿命。
+        // 外层回调在采集线程立即执行，invokeMethod 的排队回调才在接收对象所属线程执行。
         // DirectConnection 仅访问带锁邮箱，GUI/录像仍在各自线程消费。
         connect(monitor_tasks_[i], &MonitorTask::frameReady, this,
                 [this, i](const cv::Mat &frame, int) {
@@ -1035,6 +1073,7 @@ void MainWidget::init_workers()
     }
 }
 
+// 先阻止重复收尾，再停采集、封口录像、处理保存通知，最后释放线程和帧信箱。
 void MainWidget::shutdown_workers()
 {
     if (shutting_down_workers_) return;
@@ -1078,6 +1117,7 @@ void MainWidget::shutdown_workers()
     shutting_down_workers_ = false;
 }
 
+// 加载四路配置；失败保留可用默认值并显示原因，不能把损坏数据直接应用。
 void MainWidget::load_channel_configs()
 {
     QString errorText;
@@ -1089,6 +1129,7 @@ void MainWidget::load_channel_configs()
     }
 }
 
+// 读取已保存的录像/检测设置并填入控件；兼容配置还有 SystemConfigService 入口。
 void MainWidget::load_system_settings()
 {
     QString value;
@@ -1116,6 +1157,7 @@ void MainWidget::load_system_settings()
     detection_confidence_spin_->setValue(detection_confidence_value_);
 }
 
+// 选择候选录像目录；取消对话框时保持原值，真正保存由保存按钮触发。
 void MainWidget::browse_record_directory()
 {
     const QString path = QFileDialog::getExistingDirectory(
@@ -1123,6 +1165,7 @@ void MainWidget::browse_record_directory()
     if (!path.isEmpty()) record_directory_edit_->setText(path);
 }
 
+// 先验证并事务保存存储/采集参数，再更新内存并重启正在运行的通道。
 void MainWidget::save_recording_settings()
 {
     if(!require_permission(AuthPermission::Settings,"修改配置"))return;
@@ -1161,6 +1204,7 @@ void MainWidget::save_recording_settings()
     QMessageBox::information(this, "录像设置", "录像目录和分段时长已保存并应用。");
 }
 
+// 选择 ONNX 路径填入控件；此时不加载模型、不启用推理。
 void MainWidget::browse_yolo_model()
 {
     const QString path = QFileDialog::getOpenFileName(
@@ -1168,6 +1212,7 @@ void MainWidget::browse_yolo_model()
     if (!path.isEmpty()) yolo_model_edit_->setText(path);
 }
 
+// 验证模型文件并成组保存检测参数，成功后才重新配置各通道检测。
 void MainWidget::save_detection_settings()
 {
     if(!require_permission(AuthPermission::Settings,"修改配置"))return;
@@ -1194,6 +1239,7 @@ void MainWidget::save_detection_settings()
     QMessageBox::information(this, "智能检测", enabled ? "已为配置的通道启用后台人形检测，退出登录后继续运行。" : "智能检测已关闭，预览与普通录像保持运行。");
 }
 
+// 接收有效源 FPS，把通道、目录与时长排队传给对应录像 Worker。
 void MainWidget::on_source_ready(int channelId, double fps)
 {
     if (shutting_down_workers_ || channelId < 1 || channelId > 4) return;
@@ -1206,6 +1252,7 @@ void MainWidget::on_source_ready(int channelId, double fps)
     }, Qt::QueuedConnection);
 }
 
+// 普通段封口后先写恢复清单再入库；失败保留文件和待办并显示警告。
 void MainWidget::on_segment_saved(const Video &video)
 {
     QString error;
@@ -1219,12 +1266,14 @@ void MainWidget::on_segment_saved(const Video &video)
         active_record_paths_[video.getChannelId() - 1].clear();
 }
 
+// 显示录像失败信息，不把失败文件误报为已完成记录。
 void MainWidget::on_record_error(int channelId, const QString &message)
 {
     qWarning().noquote() << QStringLiteral("通道 %1 录像告警：%2").arg(channelId).arg(message);
     lab_storage_warning->setText(message);
 }
 
+// 将空间不足作为系统事件记录并显示，管理员 ID 不归属当前偶然登录用户。
 void MainWidget::on_storage_warning(int channelId, const QString &message)
 {
     audit("磁盘告警",QString("通道%1：%2").arg(channelId).arg(message),0);
@@ -1232,10 +1281,12 @@ void MainWidget::on_storage_warning(int channelId, const QString &message)
     lab_storage_warning->setText(message);
 }
 
+// 记录当前正在写入的文件路径，供通道状态与封口回调核对。
 void MainWidget::on_segment_started(int channelId, const QString &path)
 {
     if(channelId>=1&&channelId<=4)active_record_paths_[channelId-1]=path;
 }
+// 仅允许当前单画面通道触发，将事件键和置信度投递给录像任务。
 void MainWidget::on_person_detected(int channelId,const QString &eventKey,const QDateTime &eventTime,double confidence)
 {
     Q_UNUSED(eventTime);
@@ -1245,12 +1296,14 @@ void MainWidget::on_person_detected(int channelId,const QString &eventKey,const 
     QMetaObject::invokeMethod(task,[task,eventKey,confidence]{task->beginEvent(eventKey,confidence);},Qt::QueuedConnection);
 }
 
+// 展示模型加载/运行状态；检测不可用不等同于采集必然失败。
 void MainWidget::on_detection_message(int channelId, const QString &message)
 {
     qInfo().noquote() << QStringLiteral("通道 %1：%2").arg(channelId).arg(message);
     lab_storage_warning->setText(message);
 }
 
+// 把已应用的配置回填控件，避免把编辑中的值当成正在运行的配置。
 void MainWidget::apply_channel_configs_to_ui()
 {
     for (int i = 0; i < 4; ++i) {
@@ -1274,6 +1327,7 @@ void MainWidget::apply_channel_configs_to_ui()
     refresh_channel_list();
 }
 
+// 收集四路候选配置，返回值对象供校验；此函数不写数据库。
 QList<ChannelConfig> MainWidget::collect_channel_configs_from_ui() const
 {
     QList<ChannelConfig> configs;
@@ -1290,6 +1344,7 @@ QList<ChannelConfig> MainWidget::collect_channel_configs_from_ui() const
     return configs;
 }
 
+// 按配置和运行标志刷新设备列表，保持编号与数组下标对应。
 void MainWidget::refresh_channel_list()
 {
     // 刷新运行状态不属于用户换通道，避免重载当前 YOLO 并重置事件状态。
@@ -1313,6 +1368,7 @@ void MainWidget::refresh_channel_list()
     device_list->setCurrentRow(qBound(0, row, 3));
 }
 
+// 根据摄像头/文件类型启用相关输入，避免两类来源同时编辑。
 void MainWidget::update_source_controls(int index)
 {
     if (index < 0 || index >= 4) {
@@ -1326,6 +1382,7 @@ void MainWidget::update_source_controls(int index)
     channel_file_buttons_[index]->setEnabled(!cameraSelected);
 }
 
+// 为指定通道选择本地文件，取消时保持原路径。
 void MainWidget::choose_channel_file(int index)
 {
     if (index < 0 || index >= 4) {
@@ -1341,6 +1398,7 @@ void MainWidget::choose_channel_file(int index)
     }
 }
 
+// 枚举 Qt 可见摄像头并刷新选择项，实际能否打开由采集任务验证。
 void MainWidget::refresh_camera_devices()
 {
     const QList<QCameraDevice> cameras = QMediaDevices::videoInputs();
@@ -1365,6 +1423,7 @@ void MainWidget::refresh_camera_devices()
     }
 }
 
+// 校验并保存四路候选配置，成功后应用到通道；失败不冒充保存成功。
 void MainWidget::save_channel_configs()
 {
     if (!require_permission(AuthPermission::Settings, "保存通道配置")) {
@@ -1392,6 +1451,7 @@ void MainWidget::save_channel_configs()
     QMessageBox::information(this, "保存成功", "四通道名称和来源已保存并应用。");
 }
 
+// 把列表选中项转为业务通道号，更新当前控制目标。
 void MainWidget::select_channel(QListWidgetItem *item)
 {
     const int row = device_list->row(item);
@@ -1404,18 +1464,21 @@ void MainWidget::select_channel(QListWidgetItem *item)
     if (single_mode_) show_single_window();
 }
 
+// 将用户的启动请求转给当前选中通道。
 void MainWidget::start_selected_preview()
 {
     if (!auth_session.isLoggedIn()) return;
     start_channel(selected_channel_ - 1);
 }
 
+// 将停止请求转给当前通道，同时封口对应录像任务。
 void MainWidget::stop_selected_preview()
 {
     if (!auth_session.isLoggedIn()) return;
     stop_channel(selected_channel_ - 1);
 }
 
+// 启动具有有效配置的通道；单路配置不完整不应阻止其他路。
 void MainWidget::start_configured_previews()
 {
     if (shutting_down_workers_) return;
@@ -1433,6 +1496,7 @@ void MainWidget::start_configured_previews()
     }
 }
 
+// 以值捕获配置快照，排队在采集线程中设置节拍和打开输入；不直接在 GUI 读视频。
 void MainWidget::start_channel(int index)
 {
     if (shutting_down_workers_) return;
@@ -1467,6 +1531,7 @@ void MainWidget::start_channel(int index)
         }, Qt::QueuedConnection);
 }
 
+// 分别向采集和录像线程发停止请求；排队投递不表示此刻已经停止完成。
 void MainWidget::stop_channel(int index)
 {
     if (index < 0 || index >= 4 || monitor_tasks_[index] == nullptr) {
@@ -1479,6 +1544,7 @@ void MainWidget::stop_channel(int index)
                                   Qt::QueuedConnection);
 }
 
+// 只在 GUI 线程显示信箱交来的最新帧；保留只读源帧供截图，隐藏时跳过绘制。
 void MainWidget::display_frame(const cv::Mat &frame, int channelId)
 {
     if (!auth_session.isLoggedIn() || shutting_down_workers_ || channelId < 1
@@ -1495,6 +1561,7 @@ void MainWidget::display_frame(const cv::Mat &frame, int channelId)
         target->size(), Qt::KeepAspectRatio, Qt::FastTransformation)));
 }
 
+// 显示对应通道的具体采集错误，并更新列表状态。
 void MainWidget::show_capture_error(int channelId, const QString &message)
 {
     if (channelId < 1 || channelId > 4) {
@@ -1507,6 +1574,7 @@ void MainWidget::show_capture_error(int channelId, const QString &message)
     refresh_channel_list();
 }
 
+// 同步采集运行标记；停止时请求录像封口，清空用于截图的旧帧。
 void MainWidget::on_capture_state_changed(int channelId, bool running)
 {
     if (channelId < 1 || channelId > 4) {
@@ -1526,6 +1594,7 @@ void MainWidget::on_capture_state_changed(int channelId, bool running)
     refresh_channel_list();
 }
 
+// 创建图片/日志页并连接媒体跳转、恢复和备份定时器；这些回调在 GUI 线程。
 void MainWidget::init_management_pages()
 {
     recovery_directory_ = QDir(QStandardPaths::writableLocation(QStandardPaths::AppLocalDataLocation)).filePath("pending-media");
@@ -1631,6 +1700,7 @@ void MainWidget::init_management_pages()
 
     update_management_access();
 }
+// 按登录状态启用或禁用管理入口，避免退出后继续操作旧页面。
 void MainWidget::update_management_access()
 {
     const bool allowed=auth_session.isLoggedIn();
@@ -1643,12 +1713,14 @@ void MainWidget::update_management_access()
     if(image_page_)image_page_->setEnabled(allowed);
     if(log_page_)log_page_->setEnabled(allowed);
 }
+// 写操作日志；actorId 为 0 表示系统，负值使用当前会话，正值使用明确发起者。
 void MainWidget::audit(const QString &function,const QString &description, int actorId)
 {
     OperationLogService service(DbConn::getInstance()->database());QString error;
     if(!service.record(actorId < 0 ? auth_session.userId() : actorId,function,description,QDateTime::currentDateTime(),error))
         lab_storage_warning->setText("操作成功，审计日志写入失败："+error);
 }
+// 按录像 ID 查路径并确认文件存在；播放器就绪后定位，同源跳转单独处理。
 void MainWidget::open_linked_video(qint64 id,qint64 offset)
 {
     if(!require_permission(AuthPermission::Playback,"打开关联录像"))return;
@@ -1678,6 +1750,7 @@ void MainWidget::open_linked_video(qint64 id,qint64 offset)
     playback_player_->setPlaybackRate(playback_speed_->currentData().toDouble());
     playback_player_->play();audit("回放",record.path);
 }
+// 从选中通道保存最近源帧；当前录像尚未入库时不编造 videoId。
 void MainWidget::take_preview_snapshot()
 {
     if(!require_permission(AuthPermission::Settings,"保存截图"))return;
@@ -1690,6 +1763,7 @@ void MainWidget::take_preview_snapshot()
     audit("截图",saved.imagePath);lab_storage_warning->setText("截图已保存到图片管理");
 }
 
+// 只对单画面选中通道启用检测，把配置变更排队到各采集线程。
 void MainWidget::apply_detection_mode()
 {
     for(int i=0;i<4;++i){

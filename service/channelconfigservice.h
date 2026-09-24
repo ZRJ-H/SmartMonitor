@@ -1,3 +1,6 @@
+// 【阅读导引】
+// 通道配置用例：加载默认值与已存 JSON；保存四路配置时用同一事务避免部分更新。
+
 // 声明通道配置业务服务，连接默认值/校验策略与 sys_config 数据访问层。
 #ifndef CHANNELCONFIGSERVICE_H
 #define CHANNELCONFIGSERVICE_H

@@ -1,3 +1,6 @@
+// 【阅读导引】
+// 日志业务：检查时间、分页和删除确认，再委托 Model；不负责弹出对话框。
+
 #ifndef OPERATIONLOGSERVICE_H
 #define OPERATIONLOGSERVICE_H
 

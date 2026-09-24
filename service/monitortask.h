@@ -1,3 +1,7 @@
+// 【阅读导引】
+// 单路采集 Worker：读取视频、按配置执行人形检测，再发送独立帧副本和状态。
+// 由 MainWidget 移入采集线程；普通直接调用不会因为 moveToThread 自动切换线程。
+
 // 声明单路视频采集任务；对象运行在独立 QThread 中，并以信号向主线程传递帧和状态。
 #ifndef MONITORTASK_H
 #define MONITORTASK_H
@@ -15,6 +19,7 @@
 #include <opencv2/dnn.hpp>
 #include <opencv2/videoio.hpp>
 
+// 声明 Qt 元类型支持；这不是像素深拷贝，跨线程像素独立性仍需 clone() 保证。
 Q_DECLARE_METATYPE(cv::Mat)
 
 // 单个通道的采集任务。对象会被移动到独立 QThread，避免读取视频时阻塞界面。

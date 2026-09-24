@@ -1,3 +1,6 @@
+// 【阅读导引】
+// 统一主题：用 QPalette 覆盖原生控件状态，用 QSS 定义细节；这里仅处理外观。
+
 #ifndef APPTHEME_H
 #define APPTHEME_H
 

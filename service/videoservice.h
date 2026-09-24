@@ -1,3 +1,6 @@
+// 【阅读导引】
+// 录像用例：校验请求、修正页码、组织 VideoPage，并向界面传递明确错误。
+
 // 声明录像分页业务服务，将数据库记录转换为界面可直接使用的页信息。
 #ifndef VIDEOSERVICE_H
 #define VIDEOSERVICE_H

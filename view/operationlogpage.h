@@ -1,3 +1,7 @@
+// 【阅读导引】
+// 日志界面：在操作日志与异常事件之间切换；只读详情窗口支持复制完整文本。
+// 切换查询、隐藏或禁用页面时关闭详情窗口，避免保留过期或失去权限的数据。
+
 #ifndef OPERATIONLOGPAGE_H
 #define OPERATIONLOGPAGE_H
 #include <QWidget>

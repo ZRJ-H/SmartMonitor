@@ -1,3 +1,6 @@
+// 【阅读导引】
+// 登录/注册界面：收集输入、校验验证码，解释 UserService 返回的业务结果并发出窗口信号。
+
 // 声明登录窗口，负责采集账号、密码和验证码输入，并将登录结果通过信号交给窗口管理器。
 #ifndef LOGINWIDGET_H
 #define LOGINWIDGET_H

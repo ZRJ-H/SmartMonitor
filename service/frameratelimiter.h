@@ -1,3 +1,6 @@
+// 【阅读导引】
+// 按通道限帧：根据传入的单调毫秒时间决定本次是否放行，不创建线程或定时器。
+
 #ifndef FRAMERATELIMITER_H
 #define FRAMERATELIMITER_H
 

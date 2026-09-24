@@ -1,3 +1,7 @@
+// 【阅读导引】
+// 异步数据库备份：QProcess 运行 mysqldump，成功后把 .partial 改成 .sql。
+// start 返回表示是否发起操作，最终结果由 finished 信号给出；备份不含媒体文件本体。
+
 #ifndef BACKUPSERVICE_H
 #define BACKUPSERVICE_H
 #include <QObject>

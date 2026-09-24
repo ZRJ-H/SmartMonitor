@@ -1,3 +1,7 @@
+// 【阅读导引】
+// 日志界面：在操作日志与异常事件之间切换；只读详情窗口支持复制完整文本。
+// 切换查询、隐藏或禁用页面时关闭详情窗口，避免保留过期或失去权限的数据。
+
 #include "operationlogpage.h"
 #include <QDateTimeEdit>
 #include <QLineEdit>
@@ -20,6 +24,7 @@
 #include <QShortcut>
 #include <QHideEvent>
 
+// 构造对象并初始化所需成员；冒号后的初始化列表先于函数体执行。
 OperationLogPage::OperationLogPage(const QSqlDatabase &db,QWidget *parent):QWidget(parent),service(db) {
     setObjectName("operationLogPage");
     auto root=new QVBoxLayout(this);auto filters=new QHBoxLayout;
@@ -90,6 +95,7 @@ OperationLogPage::OperationLogPage(const QSqlDatabase &db,QWidget *parent):QWidg
         page=1;reload();
     });
 }
+// 关闭旧详情并按当前标签查询日志或事件，重建表格避免使用过期选中行。
 void OperationLogPage::reload() {
     if(detailsDialog)detailsDialog->close();
     table->clearSelection();
@@ -119,6 +125,7 @@ void OperationLogPage::reload() {
     status->setText(QString("第 %1 页，%2 条").arg(page).arg(rows.size()));
 }
 
+// 只有启用状态、操作日志标签且有效行被选中时才允许查看详情。
 void OperationLogPage::updateDetailsAction()
 {
     if(!detailsButton)return;
@@ -126,6 +133,7 @@ void OperationLogPage::updateDetailsAction()
     detailsButton->setEnabled(isEnabled() && tabs->currentIndex()==0 && item && item->isSelected());
 }
 
+// 用只读纯文本展示完整字段，复制回调按值保存文本，不依赖稍后变化的表格。
 void OperationLogPage::showSelectedDetails()
 {
     updateDetailsAction();
@@ -175,6 +183,7 @@ void OperationLogPage::showSelectedDetails()
     dialog->open();
 }
 
+// 页面被禁用时同步关闭详情窗并更新按钮，防止退出后继续查看旧窗口。
 void OperationLogPage::changeEvent(QEvent *event)
 {
     QWidget::changeEvent(event);
@@ -184,6 +193,7 @@ void OperationLogPage::changeEvent(QEvent *event)
     }
 }
 
+// 页面隐藏时关闭详情对话框，再调用 QWidget 基类处理。
 void OperationLogPage::hideEvent(QHideEvent *event)
 {
     if(detailsDialog)detailsDialog->close();

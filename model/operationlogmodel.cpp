@@ -1,14 +1,20 @@
+// 【阅读导引】
+// 日志数据访问：操作日志和异常事件分别查询；管理员空值代表系统动作。
+// 事件回放先查显式媒体关联，兼容旧记录时再按录像路径查找。
+
 #include "operationlogmodel.h"
 
 #include <QSqlError>
 #include <QSqlQuery>
 #include <QStringList>
 
+// 构造对象并初始化所需成员；冒号后的初始化列表先于函数体执行。
 OperationLogModel::OperationLogModel(const QSqlDatabase &database)
     : db(database)
 {
 }
 
+// 把系统动作的 adminId 0 写为 SQL NULL，成功后回填日志 ID。
 bool OperationLogModel::insert(OperationLogEntry &entry, QString &errorText)
 {
     errorText.clear();
@@ -27,6 +33,7 @@ bool OperationLogModel::insert(OperationLogEntry &entry, QString &errorText)
     return true;
 }
 
+// 组合可选条件，以时间和 ID 倒序分页，避免同时间记录顺序漂移。
 bool OperationLogModel::query(const OperationLogFilter &filter,
                               QList<OperationLogEntry> &entries,
                               QString &errorText, int page, int pageSize) const
@@ -69,6 +76,7 @@ bool OperationLogModel::query(const OperationLogFilter &filter,
     return true;
 }
 
+// 删除包含两端边界的时间范围；确认和参数校验由服务层完成。
 bool OperationLogModel::removeRange(const QDateTime &from, const QDateTime &to,
                                     QString &errorText)
 {
@@ -84,6 +92,7 @@ bool OperationLogModel::removeRange(const QDateTime &from, const QDateTime &to,
     return true;
 }
 
+// 为 ID 列表逐个绑定 SQL 参数，不把数字列表当作用户 SQL 拼入。
 bool OperationLogModel::removeIds(const QList<qint64> &ids,QString &errorText)
 {
     QStringList placeholders;
@@ -92,6 +101,7 @@ bool OperationLogModel::removeIds(const QList<qint64> &ids,QString &errorText)
     for(int i=0;i<ids.size();++i)query.bindValue(placeholders[i],ids[i]);
     if(!query.exec()){errorText=query.lastError().text();return false;}return true;
 }
+// 联接异常事件与媒体映射；无映射的旧记录尝试通过历史路径找到录像。
 bool OperationLogModel::queryEvents(int channelId,const QDateTime &from,const QDateTime &to,int page,int pageSize,
                                     QList<EventLogEntry> &entries,QString &errorText) const
 {

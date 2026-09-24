@@ -1,3 +1,6 @@
+// 【阅读导引】
+// 登录/注册界面：收集输入、校验验证码，解释 UserService 返回的业务结果并发出窗口信号。
+
 // 实现登录表单布局、输入检查、验证码校验和 LoginResult 到用户提示的映射。
 #include "loginwidget.h"
 #include "apptheme.h"
@@ -19,6 +22,7 @@
 #include <QPushButton>
 #include <QVBoxLayout>
 
+// 构造对象并初始化所需成员；冒号后的初始化列表先于函数体执行。
 LoginWidget::LoginWidget(QWidget *parent)
     : QWidget(parent),
       // 输入框和验证码控件最终都会加入窗口布局，由 Qt 父子对象机制释放。
@@ -201,6 +205,7 @@ LoginWidget::LoginWidget(QWidget *parent)
     });
 }
 
+// 先检查输入和验证码，再调用业务；根据结果展示错误或发出登录成功信号。
 void LoginWidget::login()
 {
     // trimmed() 去掉用户名和验证码首尾空格，密码则保留用户原始输入。
@@ -301,12 +306,14 @@ void LoginWidget::login()
     pic_vcode->updateVerificationCode();
 }
 
+// 发出取消登录请求，具体退出策略由 WindowManager 决定。
 void LoginWidget::cancel()
 {
     // 只发布取消事件，窗口切换由 WindowManager 处理。
     emit login_cancelled();
 }
 
+// 将窗口关闭事件转换成取消登录流程，避免隐藏窗口后应用无人管理。
 void LoginWidget::closeEvent(QCloseEvent *event)
 {
     // 标题栏关闭按钮与“退出程序”按钮采用相同的状态通知。

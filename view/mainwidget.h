@@ -1,3 +1,8 @@
+// 【阅读导引】
+// 主界面协调：连接登录、通道、录像、图片、日志、恢复和备份；控件只能在 GUI 线程操作。
+// 先读 init_workers/start_channel，再沿帧信号读采集与录像，最后读封口后的保存链。
+// 当前预览和录像都经过 LatestFrameBuffer；慢消费会覆盖旧帧，不保证逐帧无损录制。
+
 // 声明智能监控主窗口，组织实时预览、录像回放、通道设置、登录权限和四路采集线程。
 #ifndef MAINWIDGET_H
 #define MAINWIDGET_H

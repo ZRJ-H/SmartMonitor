@@ -1,13 +1,18 @@
+// 【阅读导引】
+// 成组配置持久化：接收外部数据库句柄，提供整组读取和事务保存；不负责控件刷新。
+
 #include "systemconfigmodel.h"
 
 #include <QSqlError>
 #include <QSqlQuery>
 
+// 构造对象并初始化所需成员；冒号后的初始化列表先于函数体执行。
 SystemConfigModel::SystemConfigModel(const QSqlDatabase &database)
     : db(database)
 {
 }
 
+// 把 sys_config 行转成键值映射，失败通过 errorText 返回。
 bool SystemConfigModel::loadAll(QMap<QString, QString> &values,
                                 QString &errorText) const
 {
@@ -22,6 +27,7 @@ bool SystemConfigModel::loadAll(QMap<QString, QString> &values,
     return true;
 }
 
+// 成组检查键是否存在并更新/插入；任一 SQL 或提交失败就回滚。
 bool SystemConfigModel::saveAll(const QMap<QString, QString> &values,
                                 QString &errorText)
 {

@@ -1,3 +1,7 @@
+// 【阅读导引】
+// 图片管理界面：维护筛选、九宫格、选中状态和大图查看器；文件/SQL 操作委托 ImageService。
+// 关联回放仅发出 videoId 与偏移，播放器由主窗口持有。
+
 #include "imagepage.h"
 #include "../service/imageservice.h"
 
@@ -25,6 +29,7 @@ namespace {
 constexpr int kPageSize = 9;
 }
 
+// 构造对象并初始化所需成员；冒号后的初始化列表先于函数体执行。
 ImagePage::ImagePage(const QSqlDatabase &database,
                      const QString &imageDirectory,
                      QWidget *parent)
@@ -50,8 +55,10 @@ ImagePage::ImagePage(const QSqlDatabase &database,
     initUi();
 }
 
+// 对象销毁时释放本类负责的资源；依赖的外部对象需按约定保持有效。
 ImagePage::~ImagePage() = default;
 
+// 创建筛选、九宫格、隐藏元数据表和操作按钮，并建立局部交互连接。
 void ImagePage::initUi()
 {
     QVBoxLayout *root = new QVBoxLayout(this);
@@ -185,6 +192,7 @@ void ImagePage::initUi()
     clearSelectionState();
 }
 
+// 按筛选查一页并重新建立缩略图/元数据索引；空尾页回退后重查。
 void ImagePage::reload()
 {
     ImageFilter filter;
@@ -235,6 +243,7 @@ void ImagePage::reload()
     clearSelectionState();
 }
 
+// 仅在非首页时减少页码后重新查询。
 void ImagePage::previousPage()
 {
     if (currentPage <= 1) return;
@@ -242,6 +251,7 @@ void ImagePage::previousPage()
     reload();
 }
 
+// 请求下一页，空结果由 reload 的页码修正处理。
 void ImagePage::nextPage()
 {
     if (currentImages.size() < kPageSize) return;
@@ -249,12 +259,14 @@ void ImagePage::nextPage()
     reload();
 }
 
+// 从行元数据取当前图片数组下标，不能把行号当作数据库 ID。
 int ImagePage::imageIndexForRow(int row) const
 {
     if (row < 0 || row >= table->rowCount() || table->item(row, 0) == nullptr) return -1;
     return table->item(row, 0)->data(Qt::UserRole).toInt();
 }
 
+// 根据当前行显示预览及可用操作；文件丢失时显示说明而非假图片。
 void ImagePage::updatePreview(int currentRow)
 {
     const int index = imageIndexForRow(currentRow);
@@ -278,6 +290,7 @@ void ImagePage::updatePreview(int currentRow)
     playbackButton->setEnabled(image.videoId > 0);
 }
 
+// 清空预览并禁用依赖选中的按钮，避免操作上一次查询的图片。
 void ImagePage::clearSelectionState()
 {
     previewLabel->setPixmap(QPixmap());
@@ -287,6 +300,7 @@ void ImagePage::clearSelectionState()
     playbackButton->setEnabled(false);
 }
 
+// 把选中的缩略图/元数据行转换成数据库 ID 列表。
 QList<qint64> ImagePage::selectedIds() const
 {
     QList<qint64> ids;
@@ -308,6 +322,7 @@ QList<qint64> ImagePage::selectedIds() const
     return ids;
 }
 
+// 检查当前图的关联录像 ID，再发出定位请求；不直接创建播放器。
 void ImagePage::requestSelectedPlayback()
 {
     const int index = imageIndexForRow(table->currentRow());
@@ -316,6 +331,7 @@ void ImagePage::requestSelectedPlayback()
     if (image.videoId > 0) emit playbackRequested(image.videoId, image.videoOffsetMs);
 }
 
+// 选择目标目录后调用服务复制图片，成功发出导出审计所需数量。
 void ImagePage::exportSelected()
 {
     const QList<qint64> ids = selectedIds();
@@ -332,6 +348,7 @@ void ImagePage::exportSelected()
     emit imagesExported(ids.size());
 }
 
+// 先二次确认再调用删除服务，成功后重查当前页。
 void ImagePage::deleteSelected()
 {
     const QList<qint64> ids = selectedIds();
@@ -351,6 +368,7 @@ void ImagePage::deleteSelected()
     reload();
 }
 
+// 替换保存目录并重建服务对象，unique_ptr 自动释放旧服务。
 void ImagePage::setImageDirectory(const QString &directory)
 {
     imageDirectory = directory;
@@ -359,6 +377,7 @@ void ImagePage::setImageDirectory(const QString &directory)
     reload();
 }
 
+// 创建随关闭自动释放的查看器；共享索引让多个按钮操作同一当前图片。
 void ImagePage::openViewer()
 {
     int row=table->currentRow();
@@ -390,4 +409,5 @@ void ImagePage::openViewer()
     dialog->show();show();
 }
 
+// 清除其他筛选限制，固定事件 ID 后查询，避免旧时间范围挡住关联图片。
 void ImagePage::showEventImages(qint64 id) { exceptionFilterId=id;fromEdit->setDateTime(QDateTime(QDate(2000,1,1),QTime(0,0)));toEdit->setDateTime(QDateTime(QDate(2100,1,1),QTime(0,0)));currentPage=1;channelCombo->setCurrentIndex(0);sourceCombo->setCurrentIndex(0);reload(); }

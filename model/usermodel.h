@@ -1,3 +1,6 @@
+// 【阅读导引】
+// 账户持久化：仅访问 admin_user；参数通过 bindValue 传入，结果或错误返回业务层。
+
 // 声明 admin_user 表的数据访问对象，封装账号查询和最后登录时间更新。
 #ifndef USERMODEL_H
 #define USERMODEL_H

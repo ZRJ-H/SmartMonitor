@@ -1,3 +1,7 @@
+// 【阅读导引】
+// 登录策略：只判断输入格式与内存中的失败次数，不显示窗口、不执行 SQL。
+// LoginFailure 是一次失败处理的结果快照；LoginThrottle 才拥有累计失败状态。
+
 // 定义登录输入格式校验和失败次数限流策略，不负责访问数据库或显示界面。
 #ifndef AUTHPOLICY_H
 #define AUTHPOLICY_H
@@ -17,8 +21,12 @@ public:
 };
 
 // 一次登录失败后的限流结果，供业务层生成明确的用户提示。
+// 三个字段共同描述同一次失败，组合返回比三个输出参数更容易保持对应关系。
+// struct 的成员默认 public，适合这种供调用方读取的数据结果；计数逻辑在 LoginThrottle 中。
 struct LoginFailure
 {
+    // 默认构造函数：初始化列表在函数体之前设置成员，所以花括号中可以没有语句。
+    // 这里的 3 是初始值；recordFailure 会根据实际失败次数更新本次结果。
     LoginFailure()
         : locked(false), remainingAttempts(3), lockSeconds(0)
     {

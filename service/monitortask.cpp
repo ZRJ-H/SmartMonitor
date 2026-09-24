@@ -1,3 +1,7 @@
+// 【阅读导引】
+// 单路采集 Worker：读取视频、按配置执行人形检测，再发送独立帧副本和状态。
+// 由 MainWidget 移入采集线程；普通直接调用不会因为 moveToThread 自动切换线程。
+
 // 实现视频源打开、采集节拍控制、文件循环播放和跨线程帧信号发送。
 #include "monitortask.h"
 
@@ -6,6 +10,7 @@
 #include <opencv2/imgproc.hpp>
 #include <vector>
 
+// 构造对象并初始化所需成员；冒号后的初始化列表先于函数体执行。
 MonitorTask::MonitorTask(QObject *parent)
     : QObject(parent),
       capture_timer_(new QTimer(this)),
@@ -19,21 +24,25 @@ MonitorTask::MonitorTask(QObject *parent)
             this, &MonitorTask::captureNextFrame);
 }
 
+// 对象销毁时释放本类负责的资源；依赖的外部对象需按约定保持有效。
 MonitorTask::~MonitorTask()
 {
     stopCapture();
 }
 
+// 返回已打开后端报告的解码线程数，仅在该 Worker 所属线程读取。
 int MonitorTask::decoderThreadCount() const
 {
     return capture_.isOpened() ? qRound(capture_.get(cv::CAP_PROP_N_THREADS)) : 0;
 }
 
+// 夹取采集间隔；下一次 startCapture 按该值和帧率上限设置节拍。
 void MonitorTask::configureCaptureInterval(int milliseconds)
 {
     capture_interval_ms_ = qBound(10, milliseconds, 1000);
 }
 
+// 更新检测开关、路径和阈值并加载模型；失败关闭检测但不停止普通采集。
 void MonitorTask::configureDetection(bool enabled, const QString &modelPath,
                                      double confidence)
 {
@@ -62,6 +71,7 @@ void MonitorTask::configureDetection(bool enabled, const QString &modelPath,
     }
 }
 
+// 先释放旧输入，再打开摄像头或文件、确定帧率、启动本线程定时器。
 void MonitorTask::startCapture(const ChannelConfig &config)
 {
     // 重启前先释放旧数据源，防止摄像头或文件句柄泄漏。
@@ -104,6 +114,7 @@ void MonitorTask::startCapture(const ChannelConfig &config)
     emit captureStateChanged(config_.channelId, true);
 }
 
+// 停止定时器并释放 VideoCapture；仅在之前运行时发送状态变化。
 void MonitorTask::stopCapture()
 {
     if (capture_timer_->isActive()) {
@@ -119,6 +130,7 @@ void MonitorTask::stopCapture()
     }
 }
 
+// 定时读取画面，按检测间隔执行推理和事件冷却判断，最后发布画面。
 void MonitorTask::captureNextFrame()
 {
     if (!running_ || !capture_.isOpened()) {
@@ -189,6 +201,7 @@ void MonitorTask::captureNextFrame()
     publishFrame(frame);
 }
 
+// 集中设置文件解码参数与后端回退，避免每个文件源无上限扩张解码线程。
 bool MonitorTask::openFileCapture()
 {
     // FFmpeg 的解码线程数只能在打开时设置；首次打开和 EOF 重开共用此上限。
@@ -197,6 +210,7 @@ bool MonitorTask::openFileCapture()
                          std::vector<int>{cv::CAP_PROP_N_THREADS, 2});
 }
 
+// 摄像头直接读取；文件按节拍跳帧并在结尾回绕，返回可用的最后一帧。
 bool MonitorTask::readNextFrame(cv::Mat &frame)
 {
     if (config_.sourceType == ChannelSourceType::Camera)
@@ -219,6 +233,7 @@ bool MonitorTask::readNextFrame(cv::Mat &frame)
     return capture_.retrieve(frame) && !frame.empty();
 }
 
+// 通过输出限帧后 clone 像素；下游共享这份副本时必须保持只读。
 void MonitorTask::publishFrame(const cv::Mat &frame)
 {
     if (!output_clock_.isValid()) output_clock_.start();

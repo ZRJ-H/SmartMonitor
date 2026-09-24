@@ -1,20 +1,27 @@
+// 【阅读导引】
+// 录像用例：校验请求、修正页码、组织 VideoPage，并向界面传递明确错误。
+
 // 实现录像总页数、页码夹取和数据库分页偏移量计算。
 #include "videoservice.h"
 
 #include <QtGlobal>
 
+// 构造对象并初始化所需成员；冒号后的初始化列表先于函数体执行。
 VideoService::VideoService(int pageSize)
     : video_model(), page_size(qMax(1, pageSize))
 {
 }
 
+// 构造对象并初始化所需成员；冒号后的初始化列表先于函数体执行。
 VideoService::VideoService(const QSqlDatabase &db,int pageSize)
     : video_model(db),page_size(qMax(1,pageSize)) {}
+// 校验 ID 后查找录像，把 Model 错误转给调用者。
 bool VideoService::findById(qint64 id,VideoRecord &record,QString &errorText) {
     errorText.clear();
     if(video_model.findById(id,record)) return true;
     errorText=video_model.lastErrorText();return false;
 }
+// 统计总数、向上取整计算页数并夹取请求页；完整成功后更新 VideoPage。
 bool VideoService::loadPage(int requestedPage,
                             VideoPage &page,
                             QString &errorText)
@@ -22,6 +29,7 @@ bool VideoService::loadPage(int requestedPage,
     return loadPage(VideoQuery(), requestedPage, page, errorText);
 }
 
+// 统计总数、向上取整计算页数并夹取请求页；完整成功后更新 VideoPage。
 bool VideoService::loadPage(const VideoQuery &filter, int requestedPage,
                             VideoPage &page, QString &errorText)
 {
@@ -56,6 +64,7 @@ bool VideoService::loadPage(const VideoQuery &filter, int requestedPage,
     return true;
 }
 
+// 只接收路径和大小有效的元数据；不能据此替代视频实际解码验收。
 bool VideoService::saveVideo(const Video &video, QString &errorText, int *insertedId)
 {
     errorText.clear();
@@ -70,6 +79,7 @@ bool VideoService::saveVideo(const Video &video, QString &errorText, int *insert
     return true;
 }
 
+// 把旧式事件索引交给 Model 保存；完整三图事件链另由 EventService 处理。
 bool VideoService::saveEvent(const QString &eventKey, int channelId,
                              const QDateTime &eventTime,
                              const QString &videoPath, double confidence,
@@ -84,6 +94,7 @@ bool VideoService::saveEvent(const QString &eventKey, int channelId,
     return true;
 }
 
+// 返回每页最大条数，构造时已经确保大于零。
 int VideoService::pageSize() const
 {
     return page_size;

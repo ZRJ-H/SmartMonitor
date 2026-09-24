@@ -1,3 +1,6 @@
+// 【阅读导引】
+// 会话状态：保存已认证用户的 ID/名称；当前所有权限类别统一要求登录，不划分管理员角色。
+
 #ifndef AUTHSESSION_H
 #define AUTHSESSION_H
 

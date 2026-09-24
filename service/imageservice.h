@@ -1,3 +1,7 @@
+// 【阅读导引】
+// 图片业务：协调图片文件与 SQL 记录的保存、查询、导出和删除。
+// 事务只覆盖 SQL，文件失败需要显式补偿；遇到未知同名图片不能直接覆盖。
+
 #ifndef IMAGESERVICE_H
 #define IMAGESERVICE_H
 

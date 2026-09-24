@@ -1,3 +1,7 @@
+// 【阅读导引】
+// 系统配置业务：校验目录/范围/通道、兼容两套历史键，再交给 Model 成组保存。
+// 相对存储目录按程序目录解析；保存成功不等于设备一定能重新启动。
+
 #include "systemconfigservice.h"
 
 #include <QDir>
@@ -12,11 +16,13 @@ static QString storagePath(const QString &path) {
     return QDir::cleanPath(QDir(QCoreApplication::applicationDirPath()).absoluteFilePath(path));
 }
 
+// 构造对象并初始化所需成员；冒号后的初始化列表先于函数体执行。
 SystemConfigService::SystemConfigService(const QSqlDatabase &database)
     : model(database)
 {
 }
 
+// 先读取兼容键，再用实际工程优先键覆盖；在临时对象校验成功后才返回配置。
 bool SystemConfigService::load(SystemConfig &config, QString &errorText) const
 {
     QMap<QString, QString> values;
@@ -58,6 +64,7 @@ bool SystemConfigService::load(SystemConfig &config, QString &errorText) const
     return true;
 }
 
+// 验证配置和目录可写性，在同一事务中保存优先键与兼容键。
 bool SystemConfigService::save(const SystemConfig &config, QString &errorText)
 {
     if (!validate(config, errorText)
@@ -91,6 +98,7 @@ bool SystemConfigService::save(const SystemConfig &config, QString &errorText)
     return model.saveAll(values, errorText);
 }
 
+// 只检查字段、范围和摄像头分配合法性；不打开摄像头或加载模型。
 bool SystemConfigService::validate(const SystemConfig &config, QString &errorText)
 {
     errorText.clear();
@@ -131,6 +139,7 @@ bool SystemConfigService::validate(const SystemConfig &config, QString &errorTex
     return true;
 }
 
+// 必要时创建目录并写一个唯一探测文件，随后删除探测文件。
 bool SystemConfigService::directoryWritable(const QString &path,
                                             QString &errorText)
 {

@@ -1,3 +1,7 @@
+// 【阅读导引】
+// 图片持久化：在 feature_image 表中查询/写入元数据，不读写 JPG 像素文件。
+// 页码从 1 开始；时间加 ID 的稳定排序避免同时间记录在翻页时顺序不明确。
+
 #ifndef IMAGEMODEL_H
 #define IMAGEMODEL_H
 

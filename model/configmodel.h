@@ -1,3 +1,6 @@
+// 【阅读导引】
+// 单键配置访问：findValue 区分不存在和查询失败；upsertValue 兼容 MySQL 与 SQLite。
+
 // 声明 sys_config 表的数据访问对象，为业务层提供按键读取和写入配置的接口。
 #ifndef CONFIGMODEL_H
 #define CONFIGMODEL_H

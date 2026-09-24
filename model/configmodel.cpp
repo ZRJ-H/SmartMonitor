@@ -1,3 +1,6 @@
+// 【阅读导引】
+// 单键配置访问：findValue 区分不存在和查询失败；upsertValue 兼容 MySQL 与 SQLite。
+
 // 实现 sys_config 表的参数化查询和“存在则更新、不存在则插入”写入逻辑。
 #include "configmodel.h"
 #include "../util/dbconn.h"
@@ -5,6 +8,7 @@
 #include <QSqlError>
 #include <QSqlQuery>
 
+// 返回执行是否成功，另用 found 表示键是否存在，避免混淆缺省与故障。
 bool ConfigModel::findValue(const QString &key,
                             QString &value,
                             bool &found)
@@ -38,6 +42,7 @@ bool ConfigModel::findValue(const QString &key,
     return true;
 }
 
+// 对单个键插入或更新；按数据库驱动选择兼容的 SQL 方言。
 bool ConfigModel::upsertValue(const QString &key, const QString &value)
 {
     last_error_text_.clear();
@@ -66,6 +71,7 @@ bool ConfigModel::upsertValue(const QString &key, const QString &value)
     return true;
 }
 
+// 返回最近配置读写的数据库错误说明。
 QString ConfigModel::lastErrorText() const
 {
     return last_error_text_;

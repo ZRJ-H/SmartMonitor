@@ -1,7 +1,12 @@
+// 【阅读导引】
+// 事件保存用例：以 eventKey 去重，事务建立事件/录像/关联，再保存图片并更新完成状态。
+// SQL 事务不能回滚磁盘文件；失败重试依赖 MediaRecoveryService 保留的清单。
+
 #include "eventservice.h"
 #include "imageservice.h"
 #include <QSqlQuery>
 #include <QSqlError>
+// 验证媒体参数；已完成的同键事件直接返回，未完成的关联复用 ID 后继续补图片。
 bool EventService::save(const QString &key,const Video &video,double confidence,
                        const QList<QImage> &frames,const QList<qint64> &offsets,bool complete,QString &error)
 {
@@ -19,6 +24,7 @@ bool EventService::save(const QString &key,const Video &video,double confidence,
         exceptionId=lookup.value(0).toLongLong();videoId=lookup.value(1).toLongLong();
         if(lookup.value(2).toString()=="complete")return true;
     } else {
+        // 多张关联表必须一起提交；数据库事务不能自动回滚随后写入的图片文件。
         if(!db.transaction()){error=db.lastError().text();return false;}
         QSqlQuery q(db);
         auto execute=[&](){if(q.exec())return true;error=q.lastError().text();db.rollback();return false;};

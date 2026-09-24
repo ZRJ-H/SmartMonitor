@@ -1,3 +1,7 @@
+// 【阅读导引】
+// 已封口媒体恢复：先原子落盘待办，再尝试入库；成功才删待办，失败可在以后重放。
+// 恢复范围不包含尚未封口且没有清单的损坏视频；数据库句柄仍需在所属线程使用。
+
 #include "mediarecoveryservice.h"
 #include "eventservice.h"
 #include "videoservice.h"
@@ -12,8 +16,10 @@
 #include <QJsonArray>
 #include <QCryptographicHash>
 #include <algorithm>
+// 构造对象并初始化所需成员；冒号后的初始化列表先于函数体执行。
 MediaRecoveryService::MediaRecoveryService(const QSqlDatabase &database,const QString &queue,const QString &images)
  :db(database),queueDirectory(queue),imageDirectory(images){}
+// 把元数据和采样帧写入恢复 JSON；apply 成功且清单移除成功才返回 true。
 bool MediaRecoveryService::submit(const Video &v,const QString &key,double confidence,const QList<QImage> &frames,const QList<qint64> &offsets,bool complete,QString &error){
     error.clear();
     if(!QDir().mkpath(queueDirectory)){error="无法创建媒体恢复目录";return false;}
@@ -27,6 +33,7 @@ bool MediaRecoveryService::submit(const Video &v,const QString &key,double confi
     for(auto offset:offsets)times.append(QString::number(offset));
     o["frames"]=images;o["offsets"]=times;
     const QString name=QString::fromLatin1(QCryptographicHash::hash(v.getVideoPath().toUtf8(),QCryptographicHash::Sha256).toHex())+".json";
+    // 先把待处理业务写到本地恢复队列；QSaveFile 在 commit 时替换目标，避免留下半份 JSON。
     const QString path=QDir(queueDirectory).filePath(name);QSaveFile file(path);
     if(!file.open(QIODevice::WriteOnly)){error=file.errorString();return false;}
     const auto bytes=QJsonDocument(o).toJson(QJsonDocument::Compact);
@@ -35,6 +42,7 @@ bool MediaRecoveryService::submit(const Video &v,const QString &key,double confi
     if(!QFile::remove(path)){error="媒体已入库，但恢复清单未能移除";return false;}
     return true;
 }
+// 还原一项待办并检查录像存在；普通段按路径去重，事件交由 EventService 继续保存。
 bool MediaRecoveryService::apply(const QJsonObject &o,QString &error){
     if(o.value("version").toInt()!=1){error="不支持的恢复清单版本";return false;}
     Video video(o["name"].toString(),o["path"].toString(),o["channel"].toInt(),
@@ -52,6 +60,7 @@ bool MediaRecoveryService::apply(const QJsonObject &o,QString &error){
     EventService service(db,imageDirectory);
     return service.save(o["key"].toString(),video,o["confidence"].toDouble(),frames,offsets,o["complete"].toBool(),error);
 }
+// 从上次游标后轮转尝试最多 limit 项；返回成功数，错误逐项收集且保留待办。
 int MediaRecoveryService::replay(QStringList &errors,int limit){
     errors.clear();int count=0,attempted=0;
     QDir directory(queueDirectory);

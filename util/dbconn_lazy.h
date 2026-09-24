@@ -1,3 +1,6 @@
+// 【阅读导引】
+// 另一种懒汉数据库单例教学示例：长期持有 QSqlQuery；当前主工程未切换到此实现。
+
 // 提供另一种“连接与 QSqlQuery 一并持有”的懒汉单例教学示例，当前业务代码未使用。
 #ifndef DBCONN_LAZY_H
 #define DBCONN_LAZY_H

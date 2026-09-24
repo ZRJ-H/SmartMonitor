@@ -1,3 +1,6 @@
+// 【阅读导引】
+// 验证码自绘控件：维护验证码字符串，paintEvent 绘制字符/干扰，鼠标释放时刷新。
+
 // 声明可点击刷新的图形验证码控件，负责随机字符生成和自绘干扰背景。
 #ifndef VERIFYCODELABEL_H
 #define VERIFYCODELABEL_H

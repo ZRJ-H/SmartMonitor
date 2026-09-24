@@ -1,3 +1,7 @@
+// 【阅读导引】
+// 图片业务：协调图片文件与 SQL 记录的保存、查询、导出和删除。
+// 事务只覆盖 SQL，文件失败需要显式补偿；遇到未知同名图片不能直接覆盖。
+
 #include "imageservice.h"
 
 #include <QDir>
@@ -8,6 +12,7 @@
 #include <QUuid>
 #include <QBuffer>
 
+// 构造对象并初始化所需成员；冒号后的初始化列表先于函数体执行。
 ImageService::ImageService(const QSqlDatabase &database,
                            const QString &imageDirectory)
     : db(database),
@@ -16,6 +21,7 @@ ImageService::ImageService(const QSqlDatabase &database,
 {
 }
 
+// 要求完整三图，在同一数据库事务中保存关联；失败补偿本次新建的文件。
 bool ImageService::saveEventImages(const QList<QImage> &frames, int channelId,
                                    qint64 exceptionId, const QDateTime &capturedAt,
                                    QList<FeatureImage> &saved, QString &errorText,
@@ -84,6 +90,7 @@ bool ImageService::saveEventImages(const QList<QImage> &frames, int channelId,
     return true;
 }
 
+// 校验真实帧与关联参数，保存 JPG 和一条元数据；提交失败清理本次文件。
 bool ImageService::saveManualImage(const QImage &frame, int channelId,
                                    const QDateTime &capturedAt, qint64 videoId,
                                    qint64 videoOffsetMs, FeatureImage &saved,
@@ -123,6 +130,7 @@ bool ImageService::saveManualImage(const QImage &frame, int channelId,
     return true;
 }
 
+// 校验起止时间再查询分页记录；图片本体由界面需要显示时加载。
 bool ImageService::query(const ImageFilter &filter, int page, int pageSize,
                          QList<FeatureImage> &images, QString &errorText) const
 {
@@ -133,6 +141,7 @@ bool ImageService::query(const ImageFilter &filter, int page, int pageSize,
     return model.query(filter, page, pageSize, images, errorText);
 }
 
+// 先确认所选记录齐全再复制文件；不覆盖同名目标，失败清理本次已复制项。
 bool ImageService::exportImages(const QList<qint64> &ids,
                                 const QString &targetDirectory,
                                 QString &errorText) const
@@ -167,6 +176,7 @@ bool ImageService::exportImages(const QList<qint64> &ids,
     return true;
 }
 
+// 要求确认后暂时改名锁定文件，再删记录并提交；SQL 失败尝试恢复原名。
 bool ImageService::deleteImages(const QList<qint64> &ids, bool confirmed,
                                 QString &errorText)
 {
@@ -208,6 +218,7 @@ bool ImageService::deleteImages(const QList<qint64> &ids, bool confirmed,
     return true;
 }
 
+// 检查图片根目录并按需创建，不代表之后每一次文件写入都不会失败。
 bool ImageService::ensureDirectory(QString &errorText) const
 {
     if (directory.isEmpty() || directory == ".") {
@@ -222,6 +233,7 @@ bool ImageService::ensureDirectory(QString &errorText) const
     return true;
 }
 
+// 先写临时 JPG 再改最终名；仅对字节相同的孤立事件图片接纳入库，未知同名文件拒绝。
 bool ImageService::saveOne(const QImage &frame, FeatureImage &image,
                            QString &errorText)
 {

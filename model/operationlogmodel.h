@@ -1,3 +1,7 @@
+// 【阅读导引】
+// 日志数据访问：操作日志和异常事件分别查询；管理员空值代表系统动作。
+// 事件回放先查显式媒体关联，兼容旧记录时再按录像路径查找。
+
 #ifndef OPERATIONLOGMODEL_H
 #define OPERATIONLOGMODEL_H
 
