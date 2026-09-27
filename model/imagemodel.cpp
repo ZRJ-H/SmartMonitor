@@ -69,7 +69,7 @@ bool ImageModel::query(const ImageFilter &filter, int page, int pageSize,
 {
     images.clear();
     errorText.clear();
-    if (page < 1 || pageSize < 1) {
+    if (page < 1 || (pageSize < 1 && pageSize != -1)) {
         errorText = QString::fromUtf8("分页参数无效");
         return false;
     }
@@ -83,7 +83,8 @@ bool ImageModel::query(const ImageFilter &filter, int page, int pageSize,
 
     QString sql = QStringLiteral("SELECT %1 FROM feature_image").arg(imageColumns());
     if (!conditions.isEmpty()) sql += " WHERE " + conditions.join(" AND ");
-    sql += " ORDER BY capture_time DESC,id DESC LIMIT :limit OFFSET :offset";
+    sql += " ORDER BY capture_time DESC,id DESC";
+    if (pageSize != -1) sql += " LIMIT :limit OFFSET :offset";
 
     QSqlQuery query(db);
     query.prepare(sql);
@@ -92,8 +93,10 @@ bool ImageModel::query(const ImageFilter &filter, int page, int pageSize,
     if (filter.channelId > 0) query.bindValue(":channel", filter.channelId);
     if (!filter.captureSource.isEmpty()) query.bindValue(":source", filter.captureSource);
     if (filter.exceptionId > 0) query.bindValue(":exception", filter.exceptionId);
-    query.bindValue(":limit", pageSize);
-    query.bindValue(":offset", (page - 1) * pageSize);
+    if (pageSize != -1) {
+        query.bindValue(":limit", pageSize);
+        query.bindValue(":offset", (page - 1) * pageSize);
+    }
     if (!query.exec()) {
         errorText = query.lastError().text();
         return false;

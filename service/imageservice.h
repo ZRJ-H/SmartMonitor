@@ -23,6 +23,7 @@ public:
                          const QDateTime &capturedAt, qint64 videoId,
                          qint64 videoOffsetMs, FeatureImage &saved,
                          QString &errorText);
+    // pageSize 为 -1 时返回全部匹配记录。
     bool query(const ImageFilter &filter, int page, int pageSize,
                QList<FeatureImage> &images, QString &errorText) const;
     bool exportImages(const QList<qint64> &ids, const QString &targetDirectory,

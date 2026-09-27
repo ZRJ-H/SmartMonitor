@@ -14,3 +14,12 @@
 - operation_log.admin_id=NULL 表示系统任务，不伪造管理员。主业务成功但审计失败单独提示。
 - 数据库迁移 SQL 针对现有基础表，不依赖隐式运行查询创建结构。
   本次实际旧库 monitor_event 为 0 行；存在历史非空旧事件的其他安装需先评估 ID 回填。
+
+
+## 本地文件索引（2026-09-25）
+
+- 文件源不调用 RecordTask 重录。外部原视频内容 SHA-256 为资产标识，模型 hash/阈值/采样与合并规则为分析版本；SQLite 唯一键保证重复提交幂等。
+- 文件索引在应用 file-index/source-index.sqlite（user_version=1），与既有 MySQL 分离；assets、analyses、channel_analysis、analysis_channels、events、samples 只由源分析线程访问。不存在隐式生产 MySQL 迁移。
+- 每个文件事件一张代表 JPG，按源 PTS 保存起止位置；不把源位置叠加到分析时间伪造拍摄日期。相同文件在多通道使用不复制截图，历史分析可查询。
+- 外部源没有自动删除路径；回放前验证内容，移动可重新定位，相同路径不同内容不能复用旧事件回放。
+- 摄像头旧媒体契约保留；RecordTask 线程先 stage 原子清单，再提交 StorageWorker 独立连接入库。关闭后未入库清单仍可重放。正常保存复用已有帧而非马上解码恢复 PNG。

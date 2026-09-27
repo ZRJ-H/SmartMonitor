@@ -21,6 +21,10 @@ MediaRecoveryService::MediaRecoveryService(const QSqlDatabase &database,const QS
  :db(database),queueDirectory(queue),imageDirectory(images){}
 // 把元数据和采样帧写入恢复 JSON；apply 成功且清单移除成功才返回 true。
 bool MediaRecoveryService::submit(const Video &v,const QString &key,double confidence,const QList<QImage> &frames,const QList<qint64> &offsets,bool complete,QString &error){
+    QString manifest;
+    return stage(v,key,confidence,frames,offsets,complete,manifest,error) && applyStaged(manifest,error,&frames);
+}
+bool MediaRecoveryService::stage(const Video &v,const QString &key,double confidence,const QList<QImage> &frames,const QList<qint64> &offsets,bool complete,QString &manifest,QString &error){
     error.clear();
     if(!QDir().mkpath(queueDirectory)){error="无法创建媒体恢复目录";return false;}
     QJsonObject o{{"version",1},{"key",key},{"name",v.getVideoName()},{"path",v.getVideoPath()},{"channel",v.getChannelId()},
@@ -38,12 +42,21 @@ bool MediaRecoveryService::submit(const Video &v,const QString &key,double confi
     if(!file.open(QIODevice::WriteOnly)){error=file.errorString();return false;}
     const auto bytes=QJsonDocument(o).toJson(QJsonDocument::Compact);
     if(file.write(bytes)!=bytes.size()||!file.commit()){error=file.errorString();return false;}
-    if(!apply(o,error))return false;
-    if(!QFile::remove(path)){error="媒体已入库，但恢复清单未能移除";return false;}
+    manifest=path;
+    return true;
+}
+// Apply an already durable manifest; the producer may supply immutable frames to avoid decoding again.
+bool MediaRecoveryService::applyStaged(const QString &manifest,QString &error,const QList<QImage> *frames){
+    QFile file(manifest);
+    if(!file.open(QIODevice::ReadOnly)){error=file.errorString();return false;}
+    QJsonParseError parse;const auto document=QJsonDocument::fromJson(file.readAll(),&parse);file.close();
+    if(parse.error!=QJsonParseError::NoError||!document.isObject()){error="恢复清单损坏";return false;}
+    if(!apply(document.object(),error,frames))return false;
+    if(!QFile::remove(manifest)){error="媒体已入库，但恢复清单未能移除";return false;}
     return true;
 }
 // 还原一项待办并检查录像存在；普通段按路径去重，事件交由 EventService 继续保存。
-bool MediaRecoveryService::apply(const QJsonObject &o,QString &error){
+bool MediaRecoveryService::apply(const QJsonObject &o,QString &error,const QList<QImage> *originalFrames){
     if(o.value("version").toInt()!=1){error="不支持的恢复清单版本";return false;}
     Video video(o["name"].toString(),o["path"].toString(),o["channel"].toInt(),
         QDateTime::fromString(o["start"].toString(),Qt::ISODateWithMs),QDateTime::fromString(o["end"].toString(),Qt::ISODateWithMs),o["size"].toString().toLongLong());
@@ -55,7 +68,8 @@ bool MediaRecoveryService::apply(const QJsonObject &o,QString &error){
         VideoService service(db);return service.saveVideo(video,error);
     }
     QList<QImage> frames;QList<qint64> offsets;
-    for(const auto &value:o["frames"].toArray())frames<<QImage::fromData(QByteArray::fromBase64(value.toString().toLatin1()),"PNG");
+    if(originalFrames) frames=*originalFrames;
+    else for(const auto &value:o["frames"].toArray())frames<<QImage::fromData(QByteArray::fromBase64(value.toString().toLatin1()),"PNG");
     for(const auto &value:o["offsets"].toArray())offsets<<value.toString().toLongLong();
     EventService service(db,imageDirectory);
     return service.save(o["key"].toString(),video,o["confidence"].toDouble(),frames,offsets,o["complete"].toBool(),error);

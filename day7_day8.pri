@@ -30,3 +30,6 @@ HEADERS += $$PWD/service/mediarecoveryservice.h
 
 SOURCES += $$PWD/service/backupservice.cpp
 HEADERS += $$PWD/service/backupservice.h
+
+SOURCES += $$PWD/service/storageworker.cpp $$PWD/service/sourceanalysisworker.cpp
+HEADERS += $$PWD/service/storageworker.h $$PWD/service/sourceanalysisworker.h

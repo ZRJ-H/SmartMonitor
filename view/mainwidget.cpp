@@ -10,6 +10,10 @@
 #include <QStandardPaths>
 #include <QSettings>
 #include "../service/backupservice.h"
+#include "../service/storageworker.h"
+#include <QDialog>
+#include <QTabWidget>
+#include <QCloseEvent>
 #include "../service/channelconfigpolicy.h"
 #include "../service/monitortask.h"
 #include "../service/recordtask.h"
@@ -383,7 +387,19 @@ void MainWidget::init_ui()
     record_panel->setObjectName("recordFilterPanel");
     record_panel->setMinimumWidth(250);
     record_panel->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Expanding);
-    QVBoxLayout *record_layout = new QVBoxLayout(record_panel);
+    auto record_outer=new QVBoxLayout(record_panel);
+    source_tabs_=new QTabWidget;source_tabs_->setObjectName("playbackSourceTabs");record_outer->addWidget(source_tabs_);
+    auto recordedPage=new QWidget;auto indexedPage=new QWidget;
+    recordedPage->setObjectName("recordedSourcePage");indexedPage->setObjectName("indexedSourcePage");
+    source_tabs_->setStyleSheet("QTabWidget::pane { border: 1px solid #465365; background: #202830; } "
+        "QTabBar::tab { background: #283443; color: #dce5ef; padding: 9px 12px; border: 1px solid #465365; } "
+        "QTabBar::tab:selected { background: #315b89; color: white; } "
+        "QWidget#recordedSourcePage, QWidget#indexedSourcePage { background: #202830; } "
+        "QLabel, QCheckBox { color: #dce5ef; }");
+    source_tabs_->addTab(recordedPage,"摄像头 / 历史录像");source_tabs_->addTab(indexedPage,"本地视频事件");
+    QVBoxLayout *record_layout = new QVBoxLayout(recordedPage);
+    auto source_layout=new QVBoxLayout(indexedPage);
+
 
     QHBoxLayout *record_header_layout = new QHBoxLayout;
     QLabel *record_title = new QLabel("视频文件列表");
@@ -450,6 +466,42 @@ void MainWidget::init_ui()
     page_layout->addStretch();
     page_layout->addWidget(btn_next_video_page);
     record_layout->addLayout(page_layout);
+    auto sourceTitle=new QLabel("单击回放原视频，双击查看事件截图");
+    sourceTitle->setWordWrap(true);source_layout->addWidget(sourceTitle);
+    source_channel_=new QComboBox;source_channel_->addItem("全部通道",0);
+    for(int channel=1;channel<=4;++channel)source_channel_->addItem(QString("通道 %1").arg(channel),channel);
+    source_layout->addWidget(source_channel_);
+    connect(source_channel_,&QComboBox::currentIndexChanged,this,[this]{source_page_=0;refresh_source_events();});
+    auto sourceRefresh=new QPushButton("刷新事件列表");sourceRefresh->setObjectName("sourceEventRefreshButton");source_layout->addWidget(sourceRefresh);
+    connect(sourceRefresh,&QPushButton::clicked,this,&MainWidget::refresh_source_events);
+    source_history_=new QCheckBox("显示以前的视频和检测结果");source_layout->addWidget(source_history_);
+    source_history_->setToolTip("包含此通道以前使用的视频，以及更换检测设置前的结果");
+    connect(source_history_,&QCheckBox::toggled,this,[this]{source_page_=0;refresh_source_events();});
+    source_event_list_=new QListWidget;source_event_list_->setObjectName("sourceEventList");
+    source_event_list_->setWordWrap(true);source_event_list_->setTextElideMode(Qt::ElideMiddle);
+    source_event_list_->setMinimumHeight(100);source_layout->addWidget(source_event_list_,1);
+    auto sourcePages=new QHBoxLayout;auto previous=new QPushButton("上一页");auto next=new QPushButton("下一页");
+    source_page_label_=new QLabel("0 条");sourcePages->addWidget(previous);sourcePages->addWidget(source_page_label_,1);sourcePages->addWidget(next);source_layout->addLayout(sourcePages);
+    auto relocate=new QPushButton("重新选择原视频");relocate->setObjectName("relocateSourceButton");source_layout->addWidget(relocate);
+    relocate->setToolTip("视频移动或改名后，重新选择同一视频文件");
+    connect(previous,&QPushButton::clicked,this,[this]{source_page_=qMax(0,source_page_-1);refresh_source_events();});
+    connect(next,&QPushButton::clicked,this,[this]{++source_page_;refresh_source_events();});
+    connect(source_event_list_,&QListWidget::itemClicked,this,&MainWidget::play_source_event);
+    connect(source_event_list_,&QListWidget::itemDoubleClicked,this,[this](QListWidgetItem *item){
+        if(!auth_session.isLoggedIn())return;
+        const auto row=item->data(Qt::UserRole).value<SourceEventRow>();
+        auto dialog=new QDialog(this);dialog->setAttribute(Qt::WA_DeleteOnClose);dialog->setWindowTitle("事件截图 · 视频时间 "+QString::number(row.startMs/1000.0,'f',3)+" 秒");
+        auto layout=new QVBoxLayout(dialog);auto image=new QLabel;const QPixmap pixmap(row.image);
+        if(pixmap.isNull())image->setText("截图文件不可用");
+        else image->setPixmap(pixmap.scaled(1000,700,Qt::KeepAspectRatio,Qt::SmoothTransformation));
+        layout->addWidget(image);dialog->show();
+    });
+    connect(relocate,&QPushButton::clicked,this,[this]{
+        if(!require_permission(AuthPermission::Settings,"重新定位原视频")||!source_worker_||!source_event_list_->currentItem())return;
+        const auto row=source_event_list_->currentItem()->data(Qt::UserRole).value<SourceEventRow>();
+        const QString path=QFileDialog::getOpenFileName(this,"选择同一内容的原视频");if(path.isEmpty())return;
+        QMetaObject::invokeMethod(source_worker_,[worker=source_worker_,asset=row.asset,path]{worker->relocate(asset,path);},Qt::QueuedConnection);
+    });
     playback_content->addWidget(record_panel, 3);
 
     QFrame *playback_panel = new QFrame;
@@ -808,11 +860,13 @@ void MainWidget::setLoggedInUser(int userId, const QString &userName)
     // 登录通过后从第一页加载视频文件。
     current_video_page = 1;
     load_video_records();
+    refresh_source_events();
 }
 
 // 按当前筛选重新加载录像列表，交由分页服务校验条件。
 void MainWidget::load_video_records()
 {
+    refresh_source_events();
     current_video_page = 1;
     load_video_page(current_video_page);
 }
@@ -876,7 +930,13 @@ bool MainWidget::load_video_page(int requestedPage)
 // 验证权限与选中项，然后按数据库 ID 打开关联录像。
 void MainWidget::play_selected_record()
 {
+    ++source_playback_request_;
     if(!require_permission(AuthPermission::Playback,"播放录像"))return;
+    if(source_tabs_->currentIndex()==1){
+        auto item=source_event_list_->currentItem();
+        if(!item){lab_playback_status->setText("请先选择左侧事件");return;}
+        play_source_event(item);return;
+    }
     auto item=video_record_list->currentItem();
     if(!item){lab_playback_status->setText("请先选择录像");return;}
     open_linked_video(item->data(Qt::UserRole+1).toLongLong(),0);
@@ -885,9 +945,9 @@ void MainWidget::play_selected_record()
 // 登录后暂停播放器，保留当前源与位置以便继续。
 void MainWidget::pause_playback() { if (auth_session.isLoggedIn()) playback_player_->pause(); }
 // 仅在登录且有有效录像记录时继续播放，避免退出后恢复旧源。
-void MainWidget::resume_playback() { if (auth_session.isLoggedIn() && current_playback_.id > 0) playback_player_->play(); }
+void MainWidget::resume_playback() { if (auth_session.isLoggedIn() && !current_playback_.path.isEmpty()) playback_player_->play(); }
 // 停止当前播放器；这与停止实时采集或录像线程无关。
-void MainWidget::stop_playback() { playback_player_->stop(); }
+void MainWidget::stop_playback() { ++source_playback_request_;pending_playback_offset_=-1;playback_player_->stop(); }
 
 // 读取组合框中的倍率并设置播放器播放速率，不改变文件编码 FPS。
 void MainWidget::change_playback_speed(int index)
@@ -950,6 +1010,7 @@ bool MainWidget::require_permission(AuthPermission permission,
 // 清除用户和回放状态、隐藏可见画面并回到登录流程；后台采集与录像继续。
 void MainWidget::logout()
 {
+    ++source_playback_request_;
     audit("退出","管理员退出");
     preview_delivery_enabled_.store(false);
     auth_session.logout();
@@ -960,6 +1021,7 @@ void MainWidget::logout()
     pending_playback_offset_ = -1;
     current_video_page = 1;
     video_record_list->clear();
+    source_event_list_->clear();
     lab_video_page->setText("第 1 / 1 页，共 0 条");
     lab_login->setText("未登录");
     btn_login->setText("登录");
@@ -1033,6 +1095,37 @@ void MainWidget::show_multi_window()
 void MainWidget::init_workers()
 {
     if (monitor_threads_[0] || shutting_down_workers_) return;
+    storage_worker_=new StorageWorker(StorageConnection::from(DbConn::getInstance()->database()),this);
+    storage_worker_->setDirectories(recovery_directory_,image_directory_);
+    connect(storage_worker_,&StorageWorker::warning,this,[this](const QString &error){lab_storage_warning->setText(error);});
+    storage_worker_->start();
+    source_thread_=new QThread(this);
+    const QString indexDirectory=qEnvironmentVariable("SMART_MONITOR_INDEX_DIR",QDir(QStandardPaths::writableLocation(QStandardPaths::AppLocalDataLocation)).filePath("file-index"));
+    source_worker_=new SourceAnalysisWorker(indexDirectory);source_worker_->moveToThread(source_thread_);
+    connect(source_thread_,&QThread::finished,source_worker_,&QObject::deleteLater);
+    connect(source_worker_,&SourceAnalysisWorker::message,this,[this](int channel,const QString &text){
+        lab_storage_warning->setText(channel>0?QString("通道 %1：%2").arg(channel).arg(text):text);
+        qInfo().noquote()<<"Source analysis:"<<channel<<text;
+    });
+    connect(source_worker_,&SourceAnalysisWorker::inferenceCompleted,this,[this](int channel,qint64 ms){
+        if(detection_enabled_value_&&detection_allowed_&&!shutting_down_workers_)emit detectionCycleCompleted(channel,ms);
+    });
+    connect(source_worker_,&SourceAnalysisWorker::eventsReady,this,[this](const QList<SourceEventRow> &rows,int page,int total){
+        if(!auth_session.isLoggedIn())return;
+        const QSignalBlocker blocker(source_event_list_);source_event_list_->clear();source_page_=page;
+        source_page_label_->setText(QString("%1/%2 · %3 条").arg(page+1).arg(qMax(1,(total+49)/50)).arg(total));
+        for(const auto &r:rows){auto item=new QListWidgetItem(QString("%1\n关联通道 %2 · 事件时间 %3–%4 秒").arg(QFileInfo(r.path).fileName(),r.channels).arg(r.startMs/1000.0,0,'f',1).arg(r.endMs/1000.0,0,'f',1),source_event_list_);
+            item->setData(Qt::UserRole,QVariant::fromValue(r));item->setToolTip(QString("原视频：%1\n分析时间：%2\n单击回放，双击查看截图").arg(r.path,r.analyzedAt));}
+    });
+    connect(source_worker_,&SourceAnalysisWorker::playbackResolved,this,[this](const SourceEventRow &row,quint64 request,const QString &error){
+        if(request!=source_playback_request_||!auth_session.isLoggedIn())return;
+        if(!error.isEmpty()){lab_playback_status->setText(error);return;}
+        current_playback_.path=row.path;current_playback_.channelId=row.channels.section(',',0,0).toInt();
+        pending_playback_offset_=qMax<qint64>(0,row.startMs-2000);
+        playback_player_->setSource(QUrl::fromLocalFile(row.path));playback_player_->play();
+        lab_playback_status->setText(QString("正在回放原视频 · 事件位于 %1 秒").arg(row.startMs/1000.0,0,'f',3));
+    });
+    source_thread_->start();
     // cv::Mat 需要注册后才能作为参数通过 Qt 的跨线程队列信号传递。
     qRegisterMetaType<QList<QImage>>();
     qRegisterMetaType<QList<qint64>>();
@@ -1050,6 +1143,12 @@ void MainWidget::init_workers()
                 monitor_tasks_[i], &QObject::deleteLater);
         connect(record_threads_[i], &QThread::finished,
                 record_tasks_[i], &QObject::deleteLater);
+        connect(monitor_tasks_[i],&MonitorTask::sourcePosition,source_worker_,&SourceAnalysisWorker::requestPosition,Qt::DirectConnection);
+        connect(source_worker_,&SourceAnalysisWorker::boxesReady,monitor_tasks_[i],[task=monitor_tasks_[i],i](int channel,qint64 pts,quint64 generation,const QList<QRect> &boxes){
+            if(channel==i+1)task->setFileAnalysisBoxes(pts,generation,boxes);
+        },Qt::QueuedConnection);
+        connect(record_tasks_[i],&RecordTask::segmentSaved,storage_worker_,[worker=storage_worker_](const Video &v){worker->submit(v);},Qt::DirectConnection);
+        connect(record_tasks_[i],&RecordTask::eventSegmentSaved,storage_worker_,[worker=storage_worker_](const Video &v,const QString &key,double c,const QList<QImage> &frames,const QList<qint64> &offsets,bool complete){worker->submit(v,key,c,frames,offsets,complete);},Qt::DirectConnection);
         // 每个消费者最多排队一条通知；慢消费者取最新帧，避免积压全尺寸图像。
         // [this, i] 按值捕获通道下标并保存 this 指针；不复制窗口，也不延长窗口寿命。
         // 外层回调在采集线程立即执行，invokeMethod 的排队回调才在接收对象所属线程执行。
@@ -1068,7 +1167,7 @@ void MainWidget::init_workers()
         auto recorder = record_tasks_[i];
         connect(monitor_tasks_[i], &MonitorTask::frameReady, recorder,
                 [this, i, recorder](const cv::Mat &frame, int) {
-            if (!recording_enabled_) return;
+            if (!recording_enabled_ || !record_channel_enabled_[i].load()) return;
             if (recording_mailboxes_[i].publish(frame)) {
                 QMetaObject::invokeMethod(recorder, [this, i, recorder] {
                     const cv::Mat latest = recording_mailboxes_[i].take();
@@ -1100,10 +1199,7 @@ void MainWidget::init_workers()
                 this, &MainWidget::on_segment_saved, Qt::QueuedConnection);
         connect(record_tasks_[i], &RecordTask::eventSegmentSaved,this,
             [this](const Video &video,const QString &key,double confidence,const QList<QImage> &frames,const QList<qint64> &offsets,bool complete){
-                QString error;MediaRecoveryService events(DbConn::getInstance()->database(),recovery_directory_,image_directory_);
-                if(!events.submit(video,key,confidence,frames,offsets,complete,error))
-                    lab_storage_warning->setText("事件录像已保存，媒体入库失败："+error);
-                else audit("智能事件",key+(complete?" 已完成":" 提前结束"),0);
+                Q_UNUSED(key);Q_UNUSED(confidence);Q_UNUSED(frames);Q_UNUSED(offsets);Q_UNUSED(complete);
                 const int index=video.getChannelId()-1;
                 if(index>=0&&index<4&&active_record_paths_[index]==video.getVideoPath())active_record_paths_[index].clear();
             },Qt::QueuedConnection);
@@ -1122,6 +1218,7 @@ void MainWidget::shutdown_workers()
 {
     if (shutting_down_workers_) return;
     shutting_down_workers_ = true;
+    if(source_worker_)source_worker_->cancel();
     // 先同步停止采集并释放设备，再退出线程，避免对象销毁时仍在读取帧。
     for (int i = 0; i < 4; ++i) {
         if (monitor_tasks_[i] && monitor_threads_[i]
@@ -1158,6 +1255,8 @@ void MainWidget::shutdown_workers()
         active_record_paths_[i].clear();
         pending_event_keys_[i].clear();
     }
+    if(source_thread_){source_thread_->quit();source_thread_->wait();delete source_thread_;source_thread_=nullptr;source_worker_=nullptr;}
+    if(storage_worker_){storage_worker_->finish();storage_worker_->wait();delete storage_worker_;storage_worker_=nullptr;}
     shutting_down_workers_ = false;
 }
 
@@ -1228,6 +1327,7 @@ void MainWidget::save_recording_settings()
     config.segmentSeconds=seconds; // 保留旧配置字段，仅兼容数据库，不再控制采集调度。
     if(!service.save(config,error)){QMessageBox::warning(this,"配置保存失败",error);return;}
     image_directory_=QDir(config.imageDirectory).absolutePath();
+    if(storage_worker_)storage_worker_->setDirectories(recovery_directory_,image_directory_);
     capture_interval_value_ = config.captureIntervalMs;
     image_page_->setImageDirectory(image_directory_);
     audit("配置","存储和采集参数已保存");
@@ -1287,7 +1387,7 @@ void MainWidget::save_detection_settings()
 void MainWidget::on_source_ready(int channelId, double fps)
 {
     if (shutting_down_workers_ || channelId < 1 || channelId > 4) return;
-    if (!recording_enabled_ || !record_tasks_[channelId - 1]) return;
+    if (!recording_enabled_ || !record_tasks_[channelId - 1] || channel_configs_.at(channelId-1).sourceType!=ChannelSourceType::Camera) return;
     RecordTask *task = record_tasks_[channelId - 1];
     const QString directory = record_directory_;
     const int seconds = record_segment_seconds_value_;
@@ -1299,12 +1399,6 @@ void MainWidget::on_source_ready(int channelId, double fps)
 // 普通段封口后先写恢复清单再入库；失败保留文件和待办并显示警告。
 void MainWidget::on_segment_saved(const Video &video)
 {
-    QString error;
-    MediaRecoveryService recovery(DbConn::getInstance()->database(),recovery_directory_,image_directory_);
-    if (!recovery.submit(video,QString(),0,{}, {},true,error)) {
-        qWarning().noquote() << "录像入库失败：" << error << video.getVideoPath();
-        lab_storage_warning->setText(QStringLiteral("录像已保存但数据库入库失败：%1").arg(error));
-    }
     if (video.getChannelId() >= 1 && video.getChannelId() <= 4
             && active_record_paths_[video.getChannelId() - 1] == video.getVideoPath())
         active_record_paths_[video.getChannelId() - 1].clear();
@@ -1335,6 +1429,7 @@ void MainWidget::on_person_detected(int channelId,const QString &eventKey,const 
 {
     Q_UNUSED(eventTime);
     if(shutting_down_workers_ || !recording_enabled_ || !detection_allowed_ || !detection_enabled_value_ || channelId<1 || channelId>4)return;
+    if(channel_configs_.at(channelId-1).sourceType!=ChannelSourceType::Camera)return;
     auto task=record_tasks_[channelId-1];
     if(!task)return;
     QMetaObject::invokeMethod(task,[task,eventKey,confidence]{task->beginEvent(eventKey,confidence);},Qt::QueuedConnection);
@@ -1550,6 +1645,8 @@ void MainWidget::start_channel(int index)
     }
     QString errorText;
     const ChannelConfig config = channel_configs_.at(index);
+    record_channel_enabled_[index].store(config.sourceType==ChannelSourceType::Camera);
+    if(config.sourceType==ChannelSourceType::File && record_tasks_[index])QMetaObject::invokeMethod(record_tasks_[index],"stop",Qt::QueuedConnection);
     if (!ChannelConfigPolicy::validateForStart(config, errorText)) {
         QMessageBox::information(this, "无法启动预览", errorText);
         return;
@@ -1567,6 +1664,7 @@ void MainWidget::start_channel(int index)
             task->startCapture(config);
         },
         Qt::QueuedConnection);
+    configure_file_analysis(index);
     const bool detectionEnabled = detection_allowed_ && detection_enabled_value_;
     const QString modelPath = yolo_model_path_;
     const double confidence = detection_confidence_value_;
@@ -1582,6 +1680,8 @@ void MainWidget::stop_channel(int index)
     if (index < 0 || index >= 4 || monitor_tasks_[index] == nullptr) {
         return;
     }
+    record_channel_enabled_[index].store(false);
+    if(source_worker_)QMetaObject::invokeMethod(source_worker_,[worker=source_worker_,index]{worker->configure(index+1,{},false,{},0.5);},Qt::QueuedConnection);
     QMetaObject::invokeMethod(monitor_tasks_[index], "stopCapture",
                               Qt::QueuedConnection);
     if (record_tasks_[index])
@@ -1648,6 +1748,7 @@ void MainWidget::init_management_pages()
     SystemConfigService service(DbConn::getInstance()->database());
     if(!service.load(config,error)) lab_storage_warning->setText(error);
     image_directory_=QDir(config.imageDirectory).absolutePath();
+    if(storage_worker_)storage_worker_->setDirectories(recovery_directory_,image_directory_);
     capture_interval_value_ = config.captureIntervalMs;
     record_directory_ = config.videoDirectory;
     record_segment_seconds_value_ = config.segmentSeconds;
@@ -1707,7 +1808,7 @@ void MainWidget::init_management_pages()
     });
     connect(backup,&BackupService::finished,this,[this,backupButton,backup](bool success,const QString &detail){
         backupButton->setEnabled(true);
-        lab_storage_warning->setText(detail);
+        lab_storage_warning->setText(success ? QString("数据库备份成功（不含视频和图片），保存位置：%1").arg(detail) : detail);
         if(success) {
             QSettings settings;
             settings.setValue("backup/lastSuccess",QDateTime::currentDateTime());
@@ -1733,10 +1834,7 @@ void MainWidget::init_management_pages()
     recoverTimer->setObjectName("mediaRecoveryTimer");
     connect(recoverTimer,&QTimer::timeout,this,[this]{
         if (qEnvironmentVariable("SMART_MONITOR_AUTOSTART", "1") == "0") return;
-        MediaRecoveryService recovery(DbConn::getInstance()->database(),recovery_directory_,image_directory_);
-        QStringList errors;const int count=recovery.replay(errors);
-        if(!errors.isEmpty())lab_storage_warning->setText("媒体恢复待处理："+errors.first());
-        else if(count>0)lab_storage_warning->setText(QString("已恢复 %1 条媒体记录").arg(count));
+        if(storage_worker_)storage_worker_->requestReplay();
     });
     if (qEnvironmentVariable("SMART_MONITOR_AUTOSTART", "1") != "0") {
         recoverTimer->start(60000);
@@ -1769,6 +1867,7 @@ void MainWidget::audit(const QString &function,const QString &description, int a
 // 按录像 ID 查路径并确认文件存在；播放器就绪后定位，同源跳转单独处理。
 void MainWidget::open_linked_video(qint64 id,qint64 offset)
 {
+    ++source_playback_request_;
     if(!require_permission(AuthPermission::Playback,"打开关联录像"))return;
     VideoRecord record;QString error;
     if(!video_service.findById(id,record,error) || !QFileInfo::exists(record.path)){
@@ -1782,6 +1881,7 @@ void MainWidget::open_linked_video(qint64 id,qint64 offset)
         lab_playback_status->setText(error.isEmpty() ? "录像文件不存在" : error);
         return;
     }
+    btn_playback_snapshot->setEnabled(true);btn_playback_snapshot->setToolTip(QString());
     current_playback_=record;pending_playback_offset_=qMax<qint64>(0,offset);
     lab_playback_status->setText(QStringLiteral("当前录像：%1").arg(record.name));
     page_stack->setCurrentIndex(1);btn_playback_page->setChecked(true);
@@ -1813,9 +1913,35 @@ void MainWidget::take_preview_snapshot()
 void MainWidget::apply_detection_mode()
 {
     for(int i=0;i<4;++i){
+        configure_file_analysis(i);
         auto task=monitor_tasks_[i];if(!task)continue;
         const bool enabled=detection_allowed_ && detection_enabled_value_;
         const QString path=yolo_model_path_;const double confidence=detection_confidence_value_;
         QMetaObject::invokeMethod(task,[task,enabled,path,confidence]{task->configureDetection(enabled,path,confidence);},Qt::QueuedConnection);
     }
+}
+
+void MainWidget::configure_file_analysis(int index){
+    if(!source_worker_||index<0||index>=channel_configs_.size())return;
+    const auto config=channel_configs_.at(index);
+    const bool enabled=detection_allowed_&&detection_enabled_value_&&config.sourceType==ChannelSourceType::File;
+    const QString path=config.sourceType==ChannelSourceType::File?config.filePath:QString();
+    QMetaObject::invokeMethod(source_worker_,[worker=source_worker_,channel=index+1,path,enabled,model=yolo_model_path_,confidence=detection_confidence_value_]{worker->configure(channel,path,enabled,model,confidence);},Qt::QueuedConnection);
+}
+void MainWidget::refresh_source_events(){
+    if(!source_worker_||!auth_session.isLoggedIn())return;
+    QMetaObject::invokeMethod(source_worker_,[worker=source_worker_,page=source_page_,channel=source_channel_->currentData().toInt(),history=source_history_->isChecked()]{worker->listEvents(page,channel,history);},Qt::QueuedConnection);
+}
+void MainWidget::play_source_event(QListWidgetItem *item){
+    if(!item||!require_permission(AuthPermission::Playback,"回放文件事件"))return;
+    const quint64 request=++source_playback_request_;
+    const auto row=item->data(Qt::UserRole).value<SourceEventRow>();
+    btn_playback_snapshot->setEnabled(false);
+    btn_playback_snapshot->setToolTip("双击左侧事件即可查看已保存的截图");
+    source_tabs_->setCurrentIndex(1);
+    playback_player_->stop();playback_player_->setSource(QUrl());current_playback_=VideoRecord();
+    pending_playback_offset_=-1;
+    if(!QFileInfo::exists(row.path)){lab_playback_status->setText("找不到原视频，请点击“重新选择原视频”");return;}
+    lab_playback_status->setText("正在校验原视频…");
+    QMetaObject::invokeMethod(source_worker_,[worker=source_worker_,row,request]{worker->resolvePlayback(row,request);},Qt::QueuedConnection);
 }

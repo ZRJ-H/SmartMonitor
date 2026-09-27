@@ -4,7 +4,9 @@
 // 程序入口：创建 Qt 应用，启动窗口管理器，并在事件循环结束后依次释放界面与数据库资源。
 #include "manager/windowmanager.h"
 #include "util/dbconn.h"
+#include "service/detectionworker.h"
 
+#include <cstdio>
 #include <QApplication>
 #include <QTimer>
 #include <QSqlDatabase>
@@ -18,6 +20,16 @@ int main(int argc, char *argv[])
     cv::setNumThreads(qBound(1, QThread::idealThreadCount(), 4));
     QCoreApplication::setOrganizationName("QtProjects");
     QCoreApplication::setApplicationName("SmartMonitor");
+    const int gpuCheck=app.arguments().indexOf("--gpu-check");
+    if(gpuCheck>=0){
+        if(gpuCheck+1>=app.arguments().size()){qCritical("GPU check requires an ONNX model path");return 4;}
+        qputenv("SMART_MONITOR_DETECTION_BACKEND","directml");
+        DetectionWorker detector;const QString error=detector.configure(true,app.arguments().at(gpuCheck+1),0.5);
+        if(!error.isEmpty()){qCritical().noquote()<<error;return 5;}
+        const auto result=detector.detect(cv::Mat::zeros(640,640,CV_8UC3));
+        if(!result.error.isEmpty()){qCritical().noquote()<<result.error;return 6;}
+        std::fprintf(stdout,"GPU_INFERENCE_OK %s\n",detector.backend().toUtf8().constData());std::fflush(stdout);return 0;
+    }
     const bool smoke = app.arguments().contains("--smoke-test");
     if (app.arguments().contains("--runtime-check")) {
         // Load both deployed SQL plugins without accessing the production database.
@@ -30,7 +42,7 @@ int main(int argc, char *argv[])
             QSqlDatabase::removeDatabase(QStringLiteral("runtime-probe"));
             if (!valid) return 3;
         }
-        qInfo("RUNTIME_DRIVERS_OK");
+        std::fprintf(stdout,"RUNTIME_DRIVERS_OK\n");std::fflush(stdout);
         return 0; // 检查成功即退出，不能继续进入业务窗口和自动采集。
     }
     if (smoke) {

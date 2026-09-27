@@ -1,5 +1,5 @@
 // 【阅读导引】
-// 图片管理界面：维护筛选、九宫格、选中状态和大图查看器；文件/SQL 操作委托 ImageService。
+// 图片管理界面：维护筛选、图片网格、选中状态和大图查看器；文件/SQL 操作委托 ImageService。
 // 关联回放仅发出 videoId 与偏移，播放器由主窗口持有。
 
 #ifndef IMAGEPAGE_H
@@ -42,8 +42,6 @@ signals:
 
 private slots:
     void openViewer();
-    void previousPage();
-    void nextPage();
     void updatePreview(int currentRow);
     void exportSelected();
     void deleteSelected();
@@ -58,7 +56,6 @@ private:
     QString imageDirectory;
     std::unique_ptr<ImageService> imageService;
     QList<FeatureImage> currentImages;
-    int currentPage;
     qint64 exceptionFilterId = 0;
 
     QDateTimeEdit *fromEdit;
@@ -69,8 +66,6 @@ private:
     QListWidget *thumbnails = nullptr;
     QLabel *previewLabel;
     QLabel *pageLabel;
-    QPushButton *previousButton;
-    QPushButton *nextButton;
     QPushButton *exportButton;
     QPushButton *deleteButton;
     QPushButton *playbackButton;

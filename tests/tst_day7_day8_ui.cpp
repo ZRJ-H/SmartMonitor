@@ -6,6 +6,8 @@
 #include "../view/imagepage.h"
 
 #include <QLabel>
+#include <QDateTimeEdit>
+#include <QScrollBar>
 #include <QListWidget>
 #include <QPushButton>
 #include <QSignalSpy>
@@ -59,13 +61,14 @@ private slots:
         QVERIFY(!page.findChild<QPushButton*>("playbackImageButton")->isEnabled());
         QSignalSpy spy(&page,&ImagePage::playbackRequested);page.requestSelectedPlayback();QCOMPARE(spy.count(),0);
     }
-    void selectingSameRowAfterPageChangeUsesNewImage() {
+    void selectingSameRowAfterFilterChangeUsesNewImage() {
         QTemporaryDir dir; const auto start=QDateTime::currentDateTime();
         for(int i=0;i<10;++i) QVERIFY(insertImage(QString::number(i),dir.filePath(QString::number(i)),start.addSecs(i),100+i,i*1000)>0);
         ImagePage page(database,dir.path());page.reload();page.show();QTest::qWait(20);
         auto list=page.findChild<QListWidget*>("imageThumbnails");
         QTest::mouseClick(list->viewport(),Qt::LeftButton,Qt::NoModifier,list->visualItemRect(list->item(0)).center());
-        page.findChild<QPushButton*>("imageNextButton")->click();QTest::qWait(20);
+        page.findChild<QDateTimeEdit*>("imageToEdit")->setDateTime(start);
+        page.findChild<QPushButton*>("queryImageButton")->click();QTest::qWait(20);
         QCOMPARE(list->count(),1);
         QTest::mouseClick(list->viewport(),Qt::LeftButton,Qt::NoModifier,list->visualItemRect(list->item(0)).center());
         auto play=page.findChild<QPushButton*>("playbackImageButton");QVERIFY(play->isEnabled());
@@ -75,7 +78,7 @@ private slots:
 
     void init();
     void cleanup();
-    void imagePageLoadsNewestRowsAndPaginates();
+    void imagePageShowsAllResultsAndScrolls();
     void selectingVideoImageEmitsPlaybackRequest();
     void missingImageShowsPlaceholderAndKeepsDeleteAvailable();
 
@@ -128,7 +131,7 @@ qint64 Day7Day8UiTests::insertImage(const QString &name, const QString &path,
     return query.lastInsertId().toLongLong();
 }
 
-void Day7Day8UiTests::imagePageLoadsNewestRowsAndPaginates()
+void Day7Day8UiTests::imagePageShowsAllResultsAndScrolls()
 {
     QTemporaryDir directory;
     const QDateTime start(QDate(2026, 9, 22), QTime(8, 0));
@@ -141,16 +144,26 @@ void Day7Day8UiTests::imagePageLoadsNewestRowsAndPaginates()
     page.reload();
     QTableWidget *table = page.findChild<QTableWidget *>("imageTable");
     QVERIFY(table != nullptr);
-    QCOMPARE(table->rowCount(), 9);
+    QCOMPARE(table->rowCount(), 21);
     auto thumbnails=page.findChild<QListWidget*>("imageThumbnails");
-    QVERIFY(thumbnails);QCOMPARE(thumbnails->count(),9);
+    QVERIFY(thumbnails);QCOMPARE(thumbnails->count(),21);
     QCOMPARE(table->item(0, 0)->text(), QString("image-20.jpg"));
 
-    QVERIFY(QMetaObject::invokeMethod(&page, "nextPage"));
-    QCOMPARE(table->rowCount(), 9);
-    QVERIFY(QMetaObject::invokeMethod(&page, "nextPage"));
-    QCOMPARE(table->rowCount(), 3);
-    QCOMPARE(table->item(0, 0)->text(), QString("image-02.jpg"));
+    QCOMPARE(table->item(20, 0)->text(), QString("image-00.jpg"));
+    QVERIFY(!page.findChild<QPushButton*>("imageNextButton"));
+    QCOMPARE(page.findChild<QLabel*>("imageResultCount")->text(), QString("共 21 张"));
+    page.resize(900, 500);
+    page.show();
+    QTest::qWait(30);
+    QVERIFY(thumbnails->verticalScrollBar()->maximum() > 0);
+    thumbnails->scrollToItem(thumbnails->item(20));
+    QTest::qWait(20);
+    QVERIFY(thumbnails->viewport()->rect().intersects(thumbnails->visualItemRect(thumbnails->item(20))));
+    const int narrowRowTop = thumbnails->visualItemRect(thumbnails->item(4)).top();
+    page.resize(1400, 700);
+    QTest::qWait(30);
+    thumbnails->scrollToTop();
+    QVERIFY(thumbnails->visualItemRect(thumbnails->item(4)).top() < narrowRowTop || thumbnails->visualItemRect(thumbnails->item(4)).top() == thumbnails->visualItemRect(thumbnails->item(0)).top());
 }
 
 void Day7Day8UiTests::selectingVideoImageEmitsPlaybackRequest()

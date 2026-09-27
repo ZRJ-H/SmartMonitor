@@ -16,6 +16,7 @@ public:
     explicit ImageModel(const QSqlDatabase &database);
 
     bool insert(FeatureImage &image, QString &errorText);
+    // pageSize 为 -1 时返回全部匹配记录。
     bool query(const ImageFilter &filter, int page, int pageSize,
                QList<FeatureImage> &images, QString &errorText) const;
     bool findByIds(const QList<qint64> &ids, QList<FeatureImage> &images,

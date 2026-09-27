@@ -76,6 +76,11 @@ try {
             foreach ($dll in @('libopencv_world4140.dll','opencv_videoio_ffmpeg4140_64.dll')) {
                 Copy-Item -LiteralPath "$OpenCVBin/$dll" -Destination $destination -Force
             }
+            $gpuRuntime=Join-Path $root 'artifacts/gpu-runtime/bin'
+            if(Test-Path -LiteralPath "$gpuRuntime/onnxruntime.dll"){
+                New-Item -ItemType Directory -Force "$destination/gpu" | Out-Null
+                Get-ChildItem -LiteralPath $gpuRuntime -File | Copy-Item -Destination "$destination/gpu" -Force
+            }
             $h264 = "$root/bin/openh264-2.5.0-win64.dll"
             if (Test-Path -LiteralPath $h264) {
                 Copy-Item -LiteralPath $h264 -Destination $destination -Force

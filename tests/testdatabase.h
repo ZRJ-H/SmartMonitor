@@ -3,10 +3,13 @@
 #include "../util/dbconn.h"
 #include <QSqlQuery>
 #include <QSqlError>
+#include <QTemporaryDir>
 // 全部窗口和通道测试使用内存库，不连接或恢复用户的真实数据库。
 inline bool initializeTestDatabase() {
     qputenv("SMART_MONITOR_DB_DRIVER","QSQLITE");
-    qputenv("SMART_MONITOR_DB_NAME",":memory:");
+    static QTemporaryDir databaseDirectory;
+    qputenv("SMART_MONITOR_DB_NAME",databaseDirectory.filePath("business.sqlite").toUtf8());
+    qputenv("SMART_MONITOR_INDEX_DIR",databaseDirectory.filePath("file-index").toUtf8());
     qputenv("SMART_MONITOR_AUTOSTART","0");
     auto db = DbConn::getInstance()->database();
     if (!db.isOpen() || db.driverName() != "QSQLITE") return false;

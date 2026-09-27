@@ -89,3 +89,7 @@ SQL 备份含配置和媒体索引，不含视频、图片、ONNX 文件本体�
 ## 评审整改工作流
 
 运行 ./scripts/verify-review.ps1 执行包含真实 YOLO 的完整回归和界面截图。运行模式可用 ./scripts/run-dev.ps1 -Pipeline preview、record、full 分离负载；每次先退出旧进程。详见 [评审整改记录](verification/review-remediation-2026-09-24.md)。
+
+## 2026-09-25 GPU 与文件事件变更
+
+本地文件不再重复编码录像；按内容和模型版本分析一次，每个去重事件保存一张代表截图，事件数量不限。回放定位原视频。摄像头仍走原录像链路。GPU 使用可选 ONNX Runtime DirectML，默认 auto，失败明确回退 CPU。部署、独立 SQLite 索引备份与验收边界见 [实施验证](verification/gpu-recording-2026-09-25.md) 和 [运行环境](runtime-setup.md)。

@@ -20,6 +20,11 @@ try {
     foreach ($dll in @('libopencv_world4140.dll','opencv_videoio_ffmpeg4140_64.dll')) {
         Copy-Item -LiteralPath "$OpenCVBin/$dll" -Destination $OutputDir -Force
     }
+    $gpuRuntime=Join-Path $root 'artifacts/gpu-runtime/bin'
+    if(Test-Path -LiteralPath "$gpuRuntime/onnxruntime.dll"){
+        New-Item -ItemType Directory -Force "$OutputDir/gpu" | Out-Null
+        Get-ChildItem -LiteralPath $gpuRuntime -File | Copy-Item -Destination "$OutputDir/gpu" -Force
+    }
     # windeployqt does not discover the custom MySQL plugin or offscreen test platform.
     New-Item -ItemType Directory -Force "$OutputDir/sqldrivers","$OutputDir/platforms" | Out-Null
     foreach ($relative in @('sqldrivers/qsqlmysql.dll','libmysql.dll')) {

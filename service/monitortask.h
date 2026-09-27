@@ -13,6 +13,7 @@
 #include <QObject>
 #include <vector>
 #include <QTimer>
+#include <QRect>
 #include <QDateTime>
 #include <QElapsedTimer>
 
@@ -41,6 +42,7 @@ public slots:
     void startCapture(const ChannelConfig &config);
     // 停止定时器并释放当前 OpenCV 数据源；可重复调用。
     void stopCapture();
+    void setFileAnalysisBoxes(qint64 pts,quint64 generation,const QList<QRect> &boxes);
     void configureCaptureInterval(int milliseconds);
     void configureDetection(bool enabled, const QString &modelPath,
                             double confidence);
@@ -50,6 +52,7 @@ private slots:
     void captureNextFrame();
 
 signals:
+    void sourcePosition(int channel,qint64 pts,quint64 generation);
     void detectionCycleCompleted(int channelId, qint64 elapsedMs);
     // 发送帧的独立副本；channelId 用于主线程定位对应画面窗口。
     void frameReady(const cv::Mat &frame, int channelId);
@@ -74,6 +77,7 @@ private:
     bool running_;              // 防止重复停止并向外报告当前采集状态。
     bool detection_enabled_;
     QString detection_model_path_;
+    QString detection_backend_;
     double detection_confidence_;
     QThread *detection_thread_;
     DetectionWorker *detection_worker_;
@@ -85,6 +89,8 @@ private:
     qint64 last_event_ms_;
     QElapsedTimer last_person_seen_;
     QElapsedTimer detection_clock_;
+    quint64 source_generation_=0;
+    qint64 source_position_ms_=0,cached_box_position_ms_=-1;
     double source_fps_ = 25.0; // 文件元数据帧率；无效时采用 25 FPS。
     qint64 next_frame_index_ = 0; // 跨循环累计的源帧位置。
     QElapsedTimer playback_clock_; // 绝对调度基准，避免处理耗时逐帧累加。

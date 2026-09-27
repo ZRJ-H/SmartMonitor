@@ -14,9 +14,14 @@ public:
     MediaRecoveryService(const QSqlDatabase &db,const QString &queueDirectory,const QString &imageDirectory);
     bool submit(const Video &video,const QString &eventKey,double confidence,
                 const QList<QImage> &frames,const QList<qint64> &offsets,bool complete,QString &error);
+    // stage() has no SQL access and may run on the recording producer thread.
+    bool stage(const Video &video,const QString &eventKey,double confidence,
+               const QList<QImage> &frames,const QList<qint64> &offsets,bool complete,
+               QString &manifest,QString &error);
+    bool applyStaged(const QString &manifest,QString &error,const QList<QImage> *originalFrames=nullptr);
     int replay(QStringList &errors,int limit=20);
 private:
-    bool apply(const QJsonObject &object,QString &error);
+    bool apply(const QJsonObject &object,QString &error, const QList<QImage> *originalFrames=nullptr);
     QSqlDatabase db;
     QString queueDirectory,imageDirectory;
 };

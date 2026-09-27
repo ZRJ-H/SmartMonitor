@@ -72,17 +72,21 @@ void MonitorTask::configureDetection(bool enabled, const QString &modelPath,
     }
     auto worker = detection_worker_;
     enabled = detection_enabled_;
+    // File detection is handled once on the source timeline by SourceAnalysisWorker.
+    enabled = enabled && config_.sourceType == ChannelSourceType::Camera;
     const QString path = detection_model_path_;
     const double threshold = detection_confidence_;
     QMetaObject::invokeMethod(worker, [this, worker, generation, enabled, path, threshold] {
         const QString error = worker->configure(enabled, path, threshold);
-        QMetaObject::invokeMethod(this, [this, generation, enabled, error] {
+        const QString backend=worker->backend();
+        QMetaObject::invokeMethod(this, [this, generation, enabled, error, backend] {
             if (generation != detection_generation_) return;
             detection_ready_ = enabled && error.isEmpty();
+            detection_backend_=backend;
             if (!error.isEmpty()) {
                 detection_enabled_ = false;
                 emit detectionMessage(config_.channelId, QStringLiteral("YOLO 模型加载失败：%1").arg(error));
-            } else if (enabled) emit detectionMessage(config_.channelId, QStringLiteral("智能检测已启用"));
+            } else if (enabled) emit detectionMessage(config_.channelId, QStringLiteral("智能检测已启用：")+backend);
         }, Qt::QueuedConnection);
     }, Qt::QueuedConnection);
 }
@@ -131,7 +135,9 @@ void MonitorTask::startCapture(const ChannelConfig &config)
 // 停止定时器并释放 VideoCapture；仅在之前运行时发送状态变化。
 void MonitorTask::stopCapture()
 {
+    ++source_generation_;
     ++detection_generation_;
+    cached_box_position_ms_=-1;
     detection_ready_ = false;
     detection_boxes_.clear();
     if (capture_timer_->isActive()) {
@@ -186,6 +192,10 @@ void MonitorTask::captureNextFrame()
                     emit detectionMessage(config_.channelId, QStringLiteral("智能检测运行失败，已关闭：%1").arg(result.error));
                     return;
                 }
+                if(result.backend!=detection_backend_){
+                    detection_backend_=result.backend;
+                    emit detectionMessage(config_.channelId,"检测后端："+result.backend);
+                }
                 if (result.found) {
                     last_person_seen_.restart();
                     const qint64 now = QDateTime::currentMSecsSinceEpoch();
@@ -200,6 +210,12 @@ void MonitorTask::captureNextFrame()
                 }
             }, Qt::QueuedConnection);
         }, Qt::QueuedConnection);
+    }
+    if(config_.sourceType==ChannelSourceType::File){
+        const double ms=capture_.get(cv::CAP_PROP_POS_MSEC);
+        source_position_ms_=std::isfinite(ms)&&ms>=0?qRound64(ms):0;
+        if(cached_box_position_ms_<0||qAbs(source_position_ms_-cached_box_position_ms_)>500)detection_boxes_.clear();
+        if(detection_enabled_)emit sourcePosition(config_.channelId,source_position_ms_,source_generation_);
     }
     for (const auto &box : detection_boxes_) {
         const cv::Rect clipped = box & cv::Rect(0, 0, frame.cols, frame.rows);
@@ -253,4 +269,9 @@ bool MonitorTask::readNextFrame(cv::Mat &frame)
 void MonitorTask::publishFrame(const cv::Mat &frame)
 {
     emit frameReady(frame.clone(), config_.channelId);
+}
+
+void MonitorTask::setFileAnalysisBoxes(qint64 pts,quint64 generation,const QList<QRect> &boxes){
+    if(!running_||!detection_enabled_||config_.sourceType!=ChannelSourceType::File||generation!=source_generation_||qAbs(source_position_ms_-pts)>500)return;
+    detection_boxes_.clear();for(const auto &b:boxes)detection_boxes_.emplace_back(b.x(),b.y(),b.width(),b.height());cached_box_position_ms_=pts;
 }

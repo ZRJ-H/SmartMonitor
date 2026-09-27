@@ -142,12 +142,8 @@ private slots:
             if(!capture.isEmpty()){QDir().mkpath(capture);widget.grab().save(QDir(capture).filePath(QString("four-%1-%2.png").arg(mode).arg(width)));}
         }
         const auto recordings=QDir(directory.filePath("recordings")).entryList({"*.mp4"},QDir::Files);
-        QCOMPARE(recordings.size(),mode=="preview"?0:4);
-        for(const auto &name:recordings) {
-            cv::VideoCapture saved(directory.filePath("recordings/"+name).toStdString(),cv::CAP_FFMPEG,{cv::CAP_PROP_N_THREADS,2});
-            QVERIFY(saved.isOpened());cv::Mat frame;int count=0;while(saved.read(frame))++count;
-            QVERIFY(count>=40); // 真实解码约 5.5 秒录像，补帧不能产生零长文件。
-        }
+        QCOMPARE(recordings.size(),0); // File sources are indexed, never re-encoded.
+
     }
     void eventSelectionStartsPlaybackWithoutDetails() {
         QTemporaryDir dir;const QString path=dir.filePath("event.avi");
@@ -197,7 +193,7 @@ private slots:
     void guestStartsBackgroundWorkersAndRejectsFrames() {
         MainWidget widget;widget.show();QTest::qWait(20);
         const auto workers = widget.findChildren<QThread*>();
-        QCOMPARE(workers.size(),8);
+        QCOMPARE(workers.size(),10);
         for(auto thread:workers) QVERIFY(thread->isRunning());
         QVERIFY(!widget.findChild<QPushButton*>("startPreviewButton"));
         cv::Mat frame(120,160,CV_8UC3,cv::Scalar(0,200,0));
@@ -207,7 +203,7 @@ private slots:
     void logoutKeepsWorkersClearsPreviewAndAllowsLoginAgain() {
         MainWidget widget;widget.show();QTest::qWait(20);
         const auto workers = widget.findChildren<QThread*>();
-        QCOMPARE(workers.size(),8);
+        QCOMPARE(workers.size(),10);
         widget.setLoggedInUser(17,"admin17");
         QCOMPARE(widget.findChildren<QThread*>(),workers);
         QVERIFY(QMetaObject::invokeMethod(&widget,"on_capture_state_changed",Q_ARG(int,1),Q_ARG(bool,true)));
@@ -271,122 +267,24 @@ private slots:
         QVERIFY(!save->visibleRegion().isEmpty());
     }
 
-    void realBackgroundRecordingSpansGuestAndLoginSessions() {
-        QTemporaryDir directory;QVERIFY(directory.isValid());
-        const auto cleanup = qScopeGuard([] { clearBackgroundTestData(); });
-        QString error;QVERIFY2(prepareBackgroundSources(directory,error),qPrintable(error));
-        QSqlQuery query(DbConn::getInstance()->database());
+    void filePreviewContinuesAcrossLoginWithoutRecordingCopies() {
+        QTemporaryDir directory;QString error;
+        const auto cleanup=qScopeGuard([]{clearBackgroundTestData();});
+        QVERIFY(prepareBackgroundSources(directory,error));
+        const QStringList original=QDir(directory.path()).entryList({"*.avi"});
         {
-            // 直接覆盖正式启动路径；随即关闭后续自动维护，防止触碰其他测试目录。
-            const auto restoreAutostart=qScopeGuard([] { qputenv("SMART_MONITOR_AUTOSTART","0"); });
-            qputenv("SMART_MONITOR_AUTOSTART","1");
-            MainWidget widget;
-            qputenv("SMART_MONITOR_AUTOSTART","0");
-            widget.show();
-            const auto workers=widget.findChildren<QThread*>();
-            QCOMPARE(workers.size(),8);
-            QVERIFY(!widget.findChild<QPushButton*>("startPreviewButton"));
-            const QDir recordings(directory.filePath("recordings"));
-            QTRY_COMPARE_WITH_TIMEOUT(recordings.entryList({"*.mp4"},QDir::Files).size(),4,4000);
-            for(int sample=0;sample<7;++sample) {
-                QTest::qWait(100);
-                QVERIFY(allPreviewFramesAreHidden(widget));
-            }
-            // 未登录时直接调用界面槽也不能改变后台通道状态。
-            QVERIFY(QMetaObject::invokeMethod(&widget,"stop_selected_preview"));
-            QVERIFY(QMetaObject::invokeMethod(&widget,"start_selected_preview"));
-            widget.setLoggedInUser(17,"admin17");
-            QCOMPARE(widget.findChildren<QThread*>(),workers);
-            auto window=widget.findChildren<QLabel*>("videoWindow").first();
+            MainWidget widget;widget.show();QVERIFY(QMetaObject::invokeMethod(&widget,"start_configured_previews"));
+            QTest::qWait(400);QVERIFY(allPreviewFramesAreHidden(widget));
+            widget.setLoggedInUser(17,"admin17");auto window=widget.findChildren<QLabel*>("videoWindow").first();
             QTRY_VERIFY_WITH_TIMEOUT(!window->pixmap().isNull(),2000);
-            const QImage beforeLogout=window->pixmap().toImage();
-            const int beforeRed=beforeLogout.pixelColor(beforeLogout.width()/2,beforeLogout.height()/2).red();
-            widget.findChild<QPushButton*>("loginButton")->click();
-            QCOMPARE(widget.findChildren<QThread*>(),workers);
-            for(auto thread:workers) QVERIFY(thread->isRunning());
-            for(int sample=0;sample<10;++sample) {
-                QTest::qWait(100);
-                QVERIFY(allPreviewFramesAreHidden(widget));
-            }
-            // 普通段尚未到60秒，注销不能封口或重新配置录像任务。
-            QVERIFY(query.exec("SELECT COUNT(*) FROM video"));QVERIFY(query.next());
-            QCOMPARE(query.value(0).toInt(),0);
-            widget.setLoggedInUser(17,"admin17");
-            QCOMPARE(widget.findChildren<QThread*>(),workers);
-            QTRY_VERIFY_WITH_TIMEOUT(!window->pixmap().isNull(),2000);
-            const QImage afterLogout=window->pixmap().toImage();
-            const int afterRed=afterLogout.pixelColor(afterLogout.width()/2,afterLogout.height()/2).red();
-            QVERIFY2(afterRed>=beforeRed+12,"Source must advance during logout, without restarting or repeating the last frame");
-            QTest::qWait(200);
-            widget.findChild<QPushButton*>("loginButton")->click();
-            QVERIFY(allPreviewFramesAreHidden(widget));
-            // 仅销毁整个监控对象时关闭采集、封口录像并完成最终入库。
+            widget.findChild<QPushButton*>("loginButton")->click();QTest::qWait(400);QVERIFY(allPreviewFramesAreHidden(widget));
+            widget.setLoggedInUser(17,"admin17");QTRY_VERIFY_WITH_TIMEOUT(!window->pixmap().isNull(),2000);
+            // A late legacy detection callback must not re-enable file recording.
+            QVERIFY(QMetaObject::invokeMethod(&widget,"on_person_detected",Q_ARG(int,2),Q_ARG(QString,QString("late-file-event")),Q_ARG(QDateTime,QDateTime::currentDateTime()),Q_ARG(double,0.9)));
         }
-        QVERIFY(query.exec("SELECT video_path,channel_id FROM video ORDER BY channel_id"));
-        int rows=0;
-        while(query.next()) {
-            QCOMPARE(query.value(1).toInt(),++rows);
-            const QString path=query.value(0).toString();QVERIFY(path.startsWith(directory.path()));
-            cv::VideoCapture saved(path.toStdString(),cv::CAP_FFMPEG,{cv::CAP_PROP_N_THREADS,2});
-            QVERIFY(saved.isOpened());
-            cv::Mat frame;int decoded=0;double firstRed=0,lastRed=0;
-            while(saved.read(frame)) {
-                const double red=cv::mean(frame)[2];
-                if(decoded++==0)firstRed=red;
-                lastRed=red;
-            }
-            QVERIFY2(decoded>=15,"Recording must include actual frames before and during login/logout");
-            QVERIFY2(lastRed>=firstRed+25,"Recording must contain changing source frames throughout the session");
-        }
-        QCOMPARE(rows,4);
-    }
-
-    void guestDetectionStartsEventRecordingOnUnselectedChannel() {
-        QTemporaryDir directory;QVERIFY(directory.isValid());
-        const auto cleanup = qScopeGuard([] { clearBackgroundTestData(); });
-        QString error;QVERIFY2(prepareBackgroundSources(directory,error),qPrintable(error));
-        const QString eventKey="guest-channel-2-event";
-        ConfigModel config;QVERIFY(config.upsertValue("detection.enabled","1"));
-        {
-            MainWidget widget;widget.show();
-            QVERIFY(QMetaObject::invokeMethod(&widget,"start_configured_previews"));
-            const QDir recordings(directory.filePath("recordings"));
-            QTRY_COMPARE_WITH_TIMEOUT(recordings.entryList({"*.mp4"},QDir::Files).size(),4,4000);
-            // 注入真实检测完成回调，验证匿名后台、默认四画面及非选中通道的录像链。
-            // 此用例不替代 MonitorTask 自身的模型推理测试。
-            QVERIFY(QMetaObject::invokeMethod(&widget,"on_person_detected",Q_ARG(int,2),
-                Q_ARG(QString,eventKey),Q_ARG(QDateTime,QDateTime::currentDateTime()),Q_ARG(double,0.85)));
-            QTRY_COMPARE_WITH_TIMEOUT(recordings.entryList({"*.mp4"},QDir::Files).size(),5,3000);
-            const auto workers=widget.findChildren<QThread*>();
-            QVERIFY(allPreviewFramesAreHidden(widget));
-            widget.setLoggedInUser(17,"admin17");
-            QVERIFY(QMetaObject::invokeMethod(&widget,"show_single_window"));
-            QTest::qWait(150);
-            widget.findChild<QPushButton*>("loginButton")->click();
-            QTest::qWait(250);
-            QVERIFY(allPreviewFramesAreHidden(widget));
-            QCOMPARE(recordings.entryList({"*.mp4"},QDir::Files).size(),5);
-            widget.setLoggedInUser(17,"admin17");
-            QVERIFY(QMetaObject::invokeMethod(&widget,"show_multi_window"));
-            QTest::qWait(150);
-            QCOMPARE(widget.findChildren<QThread*>(),workers);
-            QCOMPARE(recordings.entryList({"*.mp4"},QDir::Files).size(),5);
-            QSqlQuery pending(DbConn::getInstance()->database());
-            QVERIFY(pending.exec("SELECT COUNT(*) FROM event_media_link"));QVERIFY(pending.next());
-            QCOMPARE(pending.value(0).toInt(),0);
-            // 会话及画面布局不能提前封口事件；仅本作用域退出时写入中断事件。
-        }
-        QSqlQuery query(DbConn::getInstance()->database());
-        query.prepare("SELECT e.channel_id,e.event_status,v.video_path,v.video_type FROM event_media_link l "
-                      "JOIN exception_log e ON e.id=l.exception_id JOIN video v ON v.id=l.video_id WHERE l.event_key=:key");
-        query.bindValue(":key",eventKey);QVERIFY(query.exec());QVERIFY(query.next());
-        QCOMPARE(query.value(0).toInt(),2);
-        QCOMPARE(query.value(1).toString(),QString("interrupted"));
-        QCOMPARE(query.value(3).toString(),QString("event"));
-        const QString path=query.value(2).toString();QVERIFY(path.startsWith(directory.path()));
-        cv::VideoCapture saved(path.toStdString(),cv::CAP_FFMPEG,{cv::CAP_PROP_N_THREADS,2});
-        cv::Mat decoded;QVERIFY(saved.read(decoded));
-        QVERIFY(!query.next());
+        QCOMPARE(QDir(directory.filePath("recordings")).entryList({"*.mp4"},QDir::Files).size(),0);
+        QCOMPARE(QDir(directory.path()).entryList({"*.avi"}),original);
+        QSqlQuery q(DbConn::getInstance()->database());QVERIFY(q.exec("SELECT COUNT(*) FROM video"));QVERIFY(q.next());QCOMPARE(q.value(0).toInt(),0);
     }
 
     void previewColorsAndSnapshotKeepOriginalResolution() {

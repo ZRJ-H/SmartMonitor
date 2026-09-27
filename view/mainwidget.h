@@ -8,6 +8,7 @@
 #define MAINWIDGET_H
 
 #include "../service/authsession.h"
+#include "../service/sourceanalysisworker.h"
 #include "../service/latestframebuffer.h"
 #include "../service/channelconfigservice.h"
 #include "../service/videoservice.h"
@@ -41,11 +42,13 @@ class QAudioOutput;
 class QVideoWidget;
 class MonitorTask;
 class RecordTask;
+class StorageWorker;
 
 // 应用主界面：只在 GUI 线程更新控件，视频读取由四个 MonitorTask 工作线程完成。
 class ImagePage;
 class OperationLogPage;
 class QSpinBox;
+class QTabWidget;
 
 class MainWidget : public QWidget
 {
@@ -131,6 +134,21 @@ private:
     const bool detection_allowed_ = pipeline_mode_ == "full";
     bool single_mode_ = false;
     void apply_detection_mode();
+    void configure_file_analysis(int index);
+    void refresh_source_events();
+    void play_source_event(QListWidgetItem *item);
+    SourceAnalysisWorker *source_worker_=nullptr;
+    QThread *source_thread_=nullptr;
+    StorageWorker *storage_worker_=nullptr;
+    QListWidget *source_event_list_=nullptr;
+    QTabWidget *source_tabs_=nullptr;
+    QComboBox *source_channel_=nullptr;
+    QCheckBox *source_history_=nullptr;
+    QLabel *source_page_label_=nullptr;
+    int source_page_=0;
+    quint64 source_playback_request_=0;
+    std::atomic_bool record_channel_enabled_[4]{};
+
     void init_management_pages();
     void update_management_access();
     void open_linked_video(qint64 videoId, qint64 offsetMs);
