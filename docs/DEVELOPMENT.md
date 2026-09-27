@@ -93,3 +93,9 @@ SQL 备份含配置和媒体索引，不含视频、图片、ONNX 文件本体�
 ## 2026-09-25 GPU 与文件事件变更
 
 本地文件不再重复编码录像；按内容和模型版本分析一次，每个去重事件保存一张代表截图，事件数量不限。回放定位原视频。摄像头仍走原录像链路。GPU 使用可选 ONNX Runtime DirectML，默认 auto，失败明确回退 CPU。部署、独立 SQLite 索引备份与验收边界见 [实施验证](verification/gpu-recording-2026-09-25.md) 和 [运行环境](runtime-setup.md)。
+
+## MainWidget 组件导航（2026-09-27）
+
+MainWidget 只负责导航、会话和模块连接。独立页面为 view/playbackpage、monitorpage、settingspage；后台协调和维护位于 service/monitoringcontroller、maintenancecontroller。状态归属、信号流、分阶段验证与故障定位见 [组件拆分与审查记录](verification/mainwidget-components-2026-09-27.md)。
+
+主程序与两个集成测试统一 include view/mainwidget.pri。新增组件需更新此构建清单；不要向 MainWidget 暴露页面控件，不向控制器传入页面或 MainWidget 指针。

@@ -18,6 +18,15 @@
 #include "testdatabase.h"
 
 #include "../view/mainwidget.h"
+#include "../view/playbackpage.h"
+#include "../view/monitorpage.h"
+#include "../view/settingspage.h"
+#include "../service/monitoringcontroller.h"
+#include "../service/maintenancecontroller.h"
+#include "../service/channelconfigservice.h"
+#include "../model/videomodel.h"
+#include "../service/sourceanalysisworker.h"
+#include "../model/configmodel.h"
 
 #include <QLabel>
 #include <QCheckBox>
@@ -25,6 +34,12 @@
 #include <QLineEdit>
 #include <QListWidget>
 #include <QPushButton>
+#include <QTabWidget>
+#include <QTableWidget>
+#include <QStackedWidget>
+#include <QVideoSink>
+#include "../view/operationlogpage.h"
+#include "../view/imagepage.h"
 
 namespace {
 // 所有后台测试只使用内存数据库和临时 AVI，不打开摄像头或生产文件。
@@ -73,6 +88,125 @@ class Day3MainWidgetTests : public QObject
     Q_OBJECT
 
 private slots:
+    void logEventButtonsOpenMatchingImageAndRealVideo() {
+        QTemporaryDir dir;QVERIFY(dir.isValid());
+        const QString path=dir.filePath("linked-event.avi");
+        cv::VideoWriter writer(path.toStdString(),cv::VideoWriter::fourcc('M','J','P','G'),25,cv::Size(64,48));
+        QVERIFY(writer.isOpened());for(int i=0;i<100;++i)writer.write(cv::Mat(48,64,CV_8UC3,cv::Scalar(20,70,120)));writer.release();
+        QSqlQuery q(DbConn::getInstance()->database());
+        const auto cleanup=qScopeGuard([&]{
+            q.exec("DELETE FROM feature_image WHERE id IN (88001,88002)");
+            q.exec("DELETE FROM event_media_link WHERE event_key='log-ui-event'");
+            q.exec("DELETE FROM exception_log WHERE id=88001");q.exec("DELETE FROM video WHERE id=88001");
+        });
+        q.prepare("INSERT INTO video(id,video_name,video_path,channel_id,start_time,end_time,file_size,video_type) VALUES(88001,'linked-event',:path,1,:start,:end,100,'event')");
+        q.bindValue(":path",path);q.bindValue(":start",QDateTime::currentDateTime().addSecs(-4));q.bindValue(":end",QDateTime::currentDateTime());QVERIFY(q.exec());
+        q.prepare("INSERT INTO exception_log(id,channel_id,event_time,event_status,related_video_path) VALUES(88001,1,:time,'complete',:path)");
+        q.bindValue(":time",QDateTime::currentDateTime());q.bindValue(":path",path);QVERIFY(q.exec());
+        QVERIFY(q.exec("INSERT INTO event_media_link VALUES('log-ui-event',88001,88001)"));
+        QImage frame(64,48,QImage::Format_RGB32);frame.fill(Qt::green);
+        const auto imagePath=dir.filePath("event.jpg");QVERIFY(frame.save(imagePath));
+        // 显式插入固定测试 ID，方便只清理本例创建的数据。
+        q.prepare("INSERT INTO feature_image VALUES(88001,'event.jpg',:path,1,:time,'event',88001,88001,0)");
+        q.bindValue(":path",imagePath);q.bindValue(":time",QDateTime::currentDateTime());QVERIFY(q.exec());
+        QVERIFY(q.exec("INSERT INTO feature_image VALUES(88002,'unrelated.jpg','unrelated.jpg',2,'2026-09-24T00:00:00','event',88002,0,0)"));
+        MainWidget widget;widget.resize(1280,760);widget.setLoggedInUser(17,"admin17");widget.show();
+        auto logs=widget.findChild<OperationLogPage*>();auto stack=widget.findChild<QStackedWidget*>("pageStack");
+        auto navigation=widget.findChild<QPushButton*>("logsNavigation");navigation->click();QVERIFY(navigation->isChecked());
+        logs->findChild<QTabWidget*>()->setCurrentIndex(1);
+        auto events=logs->findChild<QTableWidget*>("eventLogTable");
+        int row=-1;for(int i=0;i<events->rowCount();++i)if(events->item(i,0)->text()=="88001")row=i;
+        QVERIFY(row>=0);events->selectRow(row);QCOMPARE(stack->currentWidget(),static_cast<QWidget*>(logs));
+        const auto capture=qEnvironmentVariable("SMART_MONITOR_UI_CAPTURE_DIR");
+        if(!capture.isEmpty()){QDir().mkpath(capture);QTest::qWait(30);widget.grab().save(QDir(capture).filePath("log-events-reviewed.png"));}
+        logs->findChild<QPushButton*>("viewEventImagesButton")->click();
+        auto gallery=widget.findChild<ImagePage*>();QCOMPARE(stack->currentWidget(),static_cast<QWidget*>(gallery));
+        QVERIFY(widget.findChild<QPushButton*>("imagesNavigation")->isChecked());
+        auto thumbnails=gallery->findChild<QListWidget*>("imageThumbnails");QCOMPARE(thumbnails->count(),1);
+        QVERIFY(thumbnails->item(0)->text().contains("event.jpg"));QVERIFY(!thumbnails->item(0)->icon().isNull());
+        navigation->click();events->selectRow(row);
+        auto player=widget.findChild<QMediaPlayer*>();QVERIFY(player->videoSink());
+        QSignalSpy decoded(player->videoSink(),&QVideoSink::videoFrameChanged);
+        logs->findChild<QPushButton*>("playEventVideoButton")->click();
+        QCOMPARE(stack->currentWidget(),static_cast<QWidget*>(widget.findChild<PlaybackPage*>()));
+        QTRY_COMPARE_WITH_TIMEOUT(player->source(),QUrl::fromLocalFile(path),2000);
+        QTRY_COMPARE_WITH_TIMEOUT(player->playbackState(),QMediaPlayer::PlayingState,2000);
+        QTRY_VERIFY_WITH_TIMEOUT(decoded.count()>0,3000);
+        navigation->click();logs->findChild<QTabWidget*>()->setCurrentIndex(0);
+        if(!capture.isEmpty()){QTest::qWait(30);widget.grab().save(QDir(capture).filePath("log-operations-reviewed.png"));}
+    }
+
+    void settingsAuditKeepsExplicitSystemActor() {
+        MainWidget widget;widget.setLoggedInUser(17,"admin17");
+        auto settings=widget.findChild<SettingsPage*>();QVERIFY(settings);
+        settings->auditRequested("磁盘告警","refactor-system-warning",0);
+        settings->auditRequested("修改配置","refactor-user-setting");
+        QSqlQuery q(DbConn::getInstance()->database());
+        QVERIFY(q.exec("SELECT admin_id FROM operation_log WHERE operation_desc='refactor-system-warning' ORDER BY id DESC LIMIT 1"));
+        QVERIFY(q.next());QCOMPARE(q.value(0).toInt(),0);
+        QVERIFY(q.exec("SELECT admin_id FROM operation_log WHERE operation_desc='refactor-user-setting' ORDER BY id DESC LIMIT 1"));
+        QVERIFY(q.next());QCOMPARE(q.value(0).toInt(),17);
+    }
+
+    void componentsOwnTheirStateAndWorkers() {
+        MainWidget widget;
+        auto playback=widget.findChild<PlaybackPage*>();
+        auto monitor=widget.findChild<MonitorPage*>();
+        auto settings=widget.findChild<SettingsPage*>();
+        auto controller=widget.findChild<MonitoringController*>();
+        QVERIFY(playback);QVERIFY(monitor);QVERIFY(settings);QVERIFY(controller);
+        auto player=playback->findChild<QMediaPlayer*>();QVERIFY(player);
+        QCOMPARE(player->parent(),static_cast<QObject*>(playback));
+        QVERIFY(playback->findChildren<QThread*>().isEmpty());
+        QVERIFY(monitor->findChildren<QThread*>().isEmpty());
+        QVERIFY(settings->findChildren<QThread*>().isEmpty());
+        QVERIFY(!controller->findChildren<QThread*>().isEmpty());
+        QVERIFY(controller->findChildren<QWidget*>().isEmpty());
+        for(auto thread:widget.findChildren<QThread*>()) {
+            QObject *owner=thread;
+            while(owner && owner!=controller)owner=owner->parent();
+            QCOMPARE(owner,static_cast<QObject*>(controller));
+        }
+    }
+    void standalonePlaybackRejectsReplyFromPreviousSession() {
+        QTemporaryDir dir;const auto path=dir.filePath("original.mp4");
+        QFile file(path);QVERIFY(file.open(QIODevice::WriteOnly));file.write("source");file.close();
+        PlaybackPage page;page.setAccessEnabled(true);page.show();
+        SourceEventRow row;row.path=path;row.channels="1";row.startMs=3500;
+        page.receiveSourceEvents({row},0,1);
+        auto list=page.findChild<QListWidget*>("sourceEventList");QVERIFY(list);
+        QSignalSpy request(&page,&PlaybackPage::sourcePlaybackRequested);
+        QVERIFY(QMetaObject::invokeMethod(&page,"play_source_event",Q_ARG(QListWidgetItem*,list->item(0))));
+        QCOMPARE(request.count(),1);const auto token=request[0][1].toULongLong();
+        page.setAccessEnabled(false);page.setAccessEnabled(true);
+        page.receiveSourcePlayback(row,token,{});
+        auto player=page.findChild<QMediaPlayer*>();QVERIFY(player->source().isEmpty());
+        QCOMPARE(list->count(),0);
+    }
+    void standalonePagesDoNotOwnMonitoringTasks() {
+        MonitorPage monitor;SettingsPage settings;
+        QSignalSpy frames(&monitor,&MonitorPage::previewFramePresented);
+        monitor.setChannels(ChannelConfigPolicy::defaults());
+        monitor.on_capture_state_changed(1,true);
+        monitor.display_frame(cv::Mat(60,80,CV_8UC3,cv::Scalar(1,2,3)),1);
+        QCOMPARE(frames.count(),0);
+        QSignalSpy changed(&settings,&SettingsPage::detectionSaved);
+        settings.setDetectionEnabled(true);QCOMPARE(changed.count(),0);
+        settings.setAccessEnabled(true);
+        QSignalSpy rejected(&settings,&SettingsPage::detectionToggleRejected);
+        settings.setDetectionEnabled(true);QCOMPARE(changed.count(),0);QCOMPARE(rejected.count(),1);
+        QVERIFY(monitor.findChildren<QThread*>().isEmpty());QVERIFY(settings.findChildren<QThread*>().isEmpty());
+    }
+    void shutdownIsIdempotentAndMaintenanceIsDisabledForTests() {
+        MonitoringController controller;
+        controller.setChannels(ChannelConfigPolicy::defaults());controller.initialize();
+        controller.shutdown();controller.shutdown();QVERIFY(controller.findChildren<QThread*>().isEmpty());
+        MaintenanceController maintenance;
+        QSignalSpy recover(&maintenance,&MaintenanceController::recoveryRequested);
+        maintenance.start();QTest::qWait(20);QCOMPARE(recover.count(),0);
+        for(auto timer:maintenance.findChildren<QTimer*>())QVERIFY(!timer->isActive());
+    }
+
 
 
     void fourDifferentFilesLayeredPerformance_data() {
@@ -119,7 +253,7 @@ private slots:
                 QString saved;bool found=false;QVERIFY(config.findValue("detection.enabled",saved,found));
                 QVERIFY(found);QCOMPARE(saved,QString("1"));
             }
-            QVERIFY(QMetaObject::invokeMethod(&widget,"start_configured_previews"));
+            QVERIFY(QMetaObject::invokeMethod(widget.findChild<QObject*>("monitoringController"),"start_configured_previews"));
             QTest::qWait(1500);
             for(auto &frame:frames)frame=0;
             QElapsedTimer elapsed;elapsed.start();qint64 lastBeat=0;
@@ -197,7 +331,7 @@ private slots:
         for(auto thread:workers) QVERIFY(thread->isRunning());
         QVERIFY(!widget.findChild<QPushButton*>("startPreviewButton"));
         cv::Mat frame(120,160,CV_8UC3,cv::Scalar(0,200,0));
-        QVERIFY(QMetaObject::invokeMethod(&widget,"display_frame",Q_ARG(cv::Mat,frame),Q_ARG(int,1)));
+        QVERIFY(QMetaObject::invokeMethod(widget.findChild<QWidget*>("contentArea"),"display_frame",Q_ARG(cv::Mat,frame),Q_ARG(int,1)));
         for(auto label:widget.findChildren<QLabel*>("videoWindow")) QVERIFY(label->pixmap().isNull());
     }
     void logoutKeepsWorkersClearsPreviewAndAllowsLoginAgain() {
@@ -206,9 +340,9 @@ private slots:
         QCOMPARE(workers.size(),10);
         widget.setLoggedInUser(17,"admin17");
         QCOMPARE(widget.findChildren<QThread*>(),workers);
-        QVERIFY(QMetaObject::invokeMethod(&widget,"on_capture_state_changed",Q_ARG(int,1),Q_ARG(bool,true)));
+        QVERIFY(QMetaObject::invokeMethod(widget.findChild<QObject*>("monitoringController"),"on_capture_state_changed",Q_ARG(int,1),Q_ARG(bool,true)));
         cv::Mat frame(120,160,CV_8UC3,cv::Scalar(0,200,0));
-        QVERIFY(QMetaObject::invokeMethod(&widget,"display_frame",Q_ARG(cv::Mat,frame),Q_ARG(int,1)));
+        QVERIFY(QMetaObject::invokeMethod(widget.findChild<QWidget*>("contentArea"),"display_frame",Q_ARG(cv::Mat,frame),Q_ARG(int,1)));
         QVERIFY(!widget.findChildren<QLabel*>("videoWindow").first()->pixmap().isNull());
         QSignalSpy loginRequest(&widget,&MainWidget::login_requested);
         // 兼容修复前的退出提示，防止 modal 对话框挂起回归。
@@ -217,7 +351,7 @@ private slots:
         QCOMPARE(loginRequest.count(),1);
         QCOMPARE(widget.findChildren<QThread*>(),workers);
         for(auto thread:workers) QVERIFY(thread->isRunning());
-        QVERIFY(QMetaObject::invokeMethod(&widget,"display_frame",Q_ARG(cv::Mat,frame),Q_ARG(int,1)));
+        QVERIFY(QMetaObject::invokeMethod(widget.findChild<QWidget*>("contentArea"),"display_frame",Q_ARG(cv::Mat,frame),Q_ARG(int,1)));
         for(auto label:widget.findChildren<QLabel*>("videoWindow")) QVERIFY(label->pixmap().isNull());
         widget.setLoggedInUser(17,"admin17");QTest::qWait(20);
         QCOMPARE(widget.findChildren<QThread*>(),workers);
@@ -236,10 +370,10 @@ private slots:
     }
     void hiddenChannelDoesNotRenderPixmap() {
         MainWidget widget;widget.show();widget.setLoggedInUser(17,"admin17");
-        QVERIFY(QMetaObject::invokeMethod(&widget,"show_single_window"));
-        QVERIFY(QMetaObject::invokeMethod(&widget,"on_capture_state_changed",Q_ARG(int,2),Q_ARG(bool,true)));
+        QVERIFY(QMetaObject::invokeMethod(widget.findChild<QWidget*>("contentArea"),"show_single_window"));
+        QVERIFY(QMetaObject::invokeMethod(widget.findChild<QObject*>("monitoringController"),"on_capture_state_changed",Q_ARG(int,2),Q_ARG(bool,true)));
         cv::Mat frame(1080,1920,CV_8UC3,cv::Scalar(0,200,0));
-        QVERIFY(QMetaObject::invokeMethod(&widget,"display_frame",Q_ARG(cv::Mat,frame),Q_ARG(int,2)));
+        QVERIFY(QMetaObject::invokeMethod(widget.findChild<QWidget*>("contentArea"),"display_frame",Q_ARG(cv::Mat,frame),Q_ARG(int,2)));
         QVERIFY(widget.findChildren<QLabel*>("videoWindow").at(1)->pixmap().isNull());
     }
 
@@ -273,14 +407,14 @@ private slots:
         QVERIFY(prepareBackgroundSources(directory,error));
         const QStringList original=QDir(directory.path()).entryList({"*.avi"});
         {
-            MainWidget widget;widget.show();QVERIFY(QMetaObject::invokeMethod(&widget,"start_configured_previews"));
+            MainWidget widget;widget.show();QVERIFY(QMetaObject::invokeMethod(widget.findChild<QObject*>("monitoringController"),"start_configured_previews"));
             QTest::qWait(400);QVERIFY(allPreviewFramesAreHidden(widget));
             widget.setLoggedInUser(17,"admin17");auto window=widget.findChildren<QLabel*>("videoWindow").first();
             QTRY_VERIFY_WITH_TIMEOUT(!window->pixmap().isNull(),2000);
             widget.findChild<QPushButton*>("loginButton")->click();QTest::qWait(400);QVERIFY(allPreviewFramesAreHidden(widget));
             widget.setLoggedInUser(17,"admin17");QTRY_VERIFY_WITH_TIMEOUT(!window->pixmap().isNull(),2000);
             // A late legacy detection callback must not re-enable file recording.
-            QVERIFY(QMetaObject::invokeMethod(&widget,"on_person_detected",Q_ARG(int,2),Q_ARG(QString,QString("late-file-event")),Q_ARG(QDateTime,QDateTime::currentDateTime()),Q_ARG(double,0.9)));
+            QVERIFY(QMetaObject::invokeMethod(widget.findChild<QObject*>("monitoringController"),"on_person_detected",Q_ARG(int,2),Q_ARG(QString,QString("late-file-event")),Q_ARG(QDateTime,QDateTime::currentDateTime()),Q_ARG(double,0.9)));
         }
         QCOMPARE(QDir(directory.filePath("recordings")).entryList({"*.mp4"},QDir::Files).size(),0);
         QCOMPARE(QDir(directory.path()).entryList({"*.avi"}),original);
@@ -293,9 +427,9 @@ private slots:
         QSqlQuery sql(DbConn::getInstance()->database());
         const auto cleanup = qScopeGuard([&] {sql.exec("DELETE FROM sys_config WHERE config_key='image_dir'");sql.exec("DELETE FROM feature_image");});
         MainWidget widget;widget.show();widget.setLoggedInUser(17,"admin17");
-        QVERIFY(QMetaObject::invokeMethod(&widget,"on_capture_state_changed",Q_ARG(int,1),Q_ARG(bool,true)));
+        QVERIFY(QMetaObject::invokeMethod(widget.findChild<QObject*>("monitoringController"),"on_capture_state_changed",Q_ARG(int,1),Q_ARG(bool,true)));
         cv::Mat source(1080,1920,CV_8UC3,cv::Scalar(20,80,220));
-        QVERIFY(QMetaObject::invokeMethod(&widget,"display_frame",Q_ARG(cv::Mat,source),Q_ARG(int,1)));
+        QVERIFY(QMetaObject::invokeMethod(widget.findChild<QWidget*>("contentArea"),"display_frame",Q_ARG(cv::Mat,source),Q_ARG(int,1)));
         const QString captureDir=qEnvironmentVariable("SMART_MONITOR_UI_CAPTURE_DIR");
         if(!captureDir.isEmpty()) {
             QDir().mkpath(captureDir);
@@ -329,28 +463,28 @@ private slots:
         auto valid=new QListWidgetItem("valid",list);valid->setData(Qt::UserRole+1,65001);
         auto missing=new QListWidgetItem("missing",list);missing->setData(Qt::UserRole+1,999999);
         auto player=widget.findChild<QMediaPlayer*>();QVERIFY(player);
-        list->setCurrentItem(valid);QVERIFY(QMetaObject::invokeMethod(&widget,"play_selected_record"));
+        list->setCurrentItem(valid);QVERIFY(QMetaObject::invokeMethod(widget.findChild<QWidget*>("playbackPage"),"play_selected_record"));
         QTRY_VERIFY_WITH_TIMEOUT(player->duration()>0,3000);
         QCOMPARE(player->source(),QUrl::fromLocalFile(path));
-        list->setCurrentItem(missing);QVERIFY(QMetaObject::invokeMethod(&widget,"play_selected_record"));
+        list->setCurrentItem(missing);QVERIFY(QMetaObject::invokeMethod(widget.findChild<QWidget*>("playbackPage"),"play_selected_record"));
         QCOMPARE(player->playbackState(),QMediaPlayer::StoppedState);
         QVERIFY(player->source().isEmpty());
-        list->setCurrentItem(valid);QVERIFY(QMetaObject::invokeMethod(&widget,"play_selected_record"));
+        list->setCurrentItem(valid);QVERIFY(QMetaObject::invokeMethod(widget.findChild<QWidget*>("playbackPage"),"play_selected_record"));
         QCOMPARE(player->source(),QUrl::fromLocalFile(path));
         QTRY_VERIFY_WITH_TIMEOUT(player->duration()>0,3000);
         QCOMPARE(player->error(),QMediaPlayer::NoError);
         auto page=widget.findChild<QWidget*>("playbackPage");
         for(auto label:page->findChildren<QLabel*>()) QVERIFY(!label->text().contains(QString::fromUtf8("录像记录不存在")));
-        QVERIFY(QMetaObject::invokeMethod(&widget,"stop_playback"));
+        QVERIFY(QMetaObject::invokeMethod(widget.findChild<QWidget*>("playbackPage"),"stop_playback"));
         QVERIFY(query.exec("DELETE FROM video WHERE id=65001"));
     }
 
     void backgroundChannelRefreshDoesNotReselectOrChangeSingleView() {
         MainWidget widget;widget.show();QTest::qWait(20);
         auto list=widget.findChild<QListWidget*>("deviceList");QVERIFY(list);
-        list->setCurrentRow(2);QVERIFY(QMetaObject::invokeMethod(&widget,"show_single_window"));
+        list->setCurrentRow(2);QVERIFY(QMetaObject::invokeMethod(widget.findChild<QWidget*>("contentArea"),"show_single_window"));
         QSignalSpy selectionChanges(list,&QListWidget::currentRowChanged);
-        QVERIFY(QMetaObject::invokeMethod(&widget,"on_capture_state_changed",Q_ARG(int,1),Q_ARG(bool,true)));
+        QVERIFY(QMetaObject::invokeMethod(widget.findChild<QObject*>("monitoringController"),"on_capture_state_changed",Q_ARG(int,1),Q_ARG(bool,true)));
         QCOMPARE(list->currentRow(),2);
         QCOMPARE(selectionChanges.count(),0);
         auto windows=widget.findChildren<QLabel*>("videoWindow");
@@ -361,7 +495,7 @@ private slots:
         QVERIFY(QMetaObject::invokeMethod(&widget,"show_playback_page"));
         auto list=widget.findChild<QListWidget*>("recordList");QVERIFY(list);
         auto item=new QListWidgetItem("missing",list);item->setData(Qt::UserRole+1,999999);list->setCurrentItem(item);
-        QVERIFY(QMetaObject::invokeMethod(&widget,"play_selected_record"));
+        QVERIFY(QMetaObject::invokeMethod(widget.findChild<QWidget*>("playbackPage"),"play_selected_record"));
         auto page=widget.findChild<QWidget*>("playbackPage");QVERIFY(page);
         bool visibleError=false;
         for(auto label:page->findChildren<QLabel*>()) if(label->isVisible()&&label->text().contains(QString::fromUtf8("录像记录不存在"))) visibleError=true;
@@ -371,19 +505,19 @@ private slots:
     void singleViewFollowsMouseChannelSelection() {
         MainWidget widget; widget.show(); QTest::qWait(20);
         auto list=widget.findChild<QListWidget*>("deviceList"); QVERIFY(list);
-        QVERIFY(QMetaObject::invokeMethod(&widget,"show_single_window"));
+        QVERIFY(QMetaObject::invokeMethod(widget.findChild<QWidget*>("contentArea"),"show_single_window"));
         QTest::mouseClick(list->viewport(),Qt::LeftButton,Qt::NoModifier,list->visualItemRect(list->item(2)).center());
         auto windows=widget.findChildren<QLabel*>("videoWindow");
         QCOMPARE(windows.size(),4);
         for(int i=0;i<4;++i) QCOMPARE(!windows[i]->isHidden(),i==2);
-        QVERIFY(QMetaObject::invokeMethod(&widget,"show_multi_window"));
+        QVERIFY(QMetaObject::invokeMethod(widget.findChild<QWidget*>("contentArea"),"show_multi_window"));
         for(auto window:windows) QVERIFY(!window->isHidden());
     }
     void singleViewFollowsKeyboardChannelSelection() {
         MainWidget widget; widget.show(); QTest::qWait(20);
         auto list=widget.findChild<QListWidget*>("deviceList"); QVERIFY(list);
         list->setCurrentRow(0); list->setFocus();
-        QVERIFY(QMetaObject::invokeMethod(&widget,"show_single_window"));
+        QVERIFY(QMetaObject::invokeMethod(widget.findChild<QWidget*>("contentArea"),"show_single_window"));
         QTest::keyClick(list,Qt::Key_Down);
         QCOMPARE(list->currentRow(),1);
         auto windows=widget.findChildren<QLabel*>("videoWindow");

@@ -74,3 +74,8 @@ bool OperationLogService::queryEvents(int channelId,const QDateTime &from,const 
     }
     return model.queryEvents(channelId,from,to,page,pageSize,entries,errorText);
 }
+
+bool OperationLogService::operationNames(QStringList &names, QString &errorText) const
+{
+    return model.operationNames(names,errorText);
+}

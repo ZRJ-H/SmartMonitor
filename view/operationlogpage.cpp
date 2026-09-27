@@ -4,7 +4,6 @@
 
 #include "operationlogpage.h"
 #include <QDateTimeEdit>
-#include <QLineEdit>
 #include <QSpinBox>
 #include <QTableWidget>
 #include <QHeaderView>
@@ -33,10 +32,14 @@ OperationLogPage::OperationLogPage(const QSqlDatabase &db,QWidget *parent):QWidg
     to=new QDateTimeEdit(QDateTime(QDate(2100,1,1),QTime(0,0)));
     from->setDisplayFormat("yyyy-MM-dd HH:mm:ss");to->setDisplayFormat("yyyy-MM-dd HH:mm:ss");
     admin=new QSpinBox;admin->setRange(0,2147483647);admin->setSpecialValueText("全部管理员");
-    function=new QLineEdit;function->setPlaceholderText("功能名称（留空为全部）");
+    admin->setToolTip("按管理员编号筛选，0 表示全部管理员");
+    function=new QComboBox;function->setObjectName("operationFilter");
+    function->addItem("全部操作",QString());
+    function->setToolTip("选择已记录的操作，例如登录、回放、保存配置");
+    function->setMinimumWidth(220);
     auto search=new QPushButton("查询");
     for(auto widget:QList<QWidget*>{from,to,admin,function,search})filters->addWidget(widget);
-    channel=new QComboBox;channel->addItem("全部通道",0);for(int i=1;i<=4;++i)channel->addItem(QString("通道%1").arg(i),i);
+    channel=new QComboBox;channel->setObjectName("eventChannelFilter");channel->addItem("全部通道",0);for(int i=1;i<=4;++i)channel->addItem(QString("通道%1").arg(i),i);
     filters->addWidget(channel);root->addLayout(filters);
     table=new QTableWidget(0,5);table->setObjectName("operationLogTable");
     table->setHorizontalHeaderLabels({"编号","时间","管理员","功能","详情"});
@@ -44,14 +47,23 @@ OperationLogPage::OperationLogPage(const QSqlDatabase &db,QWidget *parent):QWidg
     table->setSelectionBehavior(QAbstractItemView::SelectRows);
     table->setEditTriggers(QAbstractItemView::NoEditTriggers);
     tabs=new QTabWidget;
-    events=new QTableWidget(0,5);events->setObjectName("eventLogTable");events->setHorizontalHeaderLabels({"事件","时间","通道","状态","录像"});
+    events=new QTableWidget(0,5);events->setObjectName("eventLogTable");events->setHorizontalHeaderLabels({"事件编号","时间","通道","状态","录像"});
+    events->setSelectionMode(QAbstractItemView::SingleSelection);
     events->setSelectionBehavior(QAbstractItemView::SelectRows);events->setEditTriggers(QAbstractItemView::NoEditTriggers);
     events->horizontalHeader()->setSectionResizeMode(QHeaderView::Stretch);
-    tabs->addTab(table,"操作日志");tabs->addTab(events,"异常事件");root->addWidget(tabs);
+    tabs->addTab(table,"操作日志");tabs->addTab(events,"异常事件");
+    tabs->setTabToolTip(1,"摄像头录像事件；本地视频检测结果请到回放页的本地视频事件查看");
+    root->addWidget(tabs);
     status=new QLabel;status->setWordWrap(true);root->addWidget(status);
     auto actions=new QHBoxLayout;auto previous=new QPushButton("上一页");auto next=new QPushButton("下一页");
     auto remove=new QPushButton("删除时间范围内的日志");
-    auto removeSelected=new QPushButton("删除所选日志");auto images=new QPushButton("关联图片");auto play=new QPushButton("关联录像");
+    auto removeSelected=new QPushButton("删除所选日志");auto images=new QPushButton("查看事件图片");auto play=new QPushButton("播放事件录像");
+    eventImagesButton=images;eventPlayButton=play;
+    images->setObjectName("viewEventImagesButton");play->setObjectName("playEventVideoButton");
+    images->setToolTip("查看所选事件保存的截图");
+    play->setToolTip("播放所选事件对应的录像，也可双击事件行");
+    images->setEnabled(false);play->setEnabled(false);
+    images->hide();play->hide();channel->hide();
     detailsButton=new QPushButton("查看详情");
     detailsButton->setObjectName("viewLogDetailsButton");
     detailsButton->setEnabled(false);
@@ -70,7 +82,11 @@ OperationLogPage::OperationLogPage(const QSqlDatabase &db,QWidget *parent):QWidg
         connect(shortcut,&QShortcut::activated,this,&OperationLogPage::showSelectedDetails);
     }
     connect(tabs,&QTabWidget::currentChanged,this,[this,remove,removeSelected](int index){
-        remove->setEnabled(index==0);removeSelected->setEnabled(index==0);page=1;reload();
+        const bool operations=index==0;
+        admin->setVisible(operations);function->setVisible(operations);channel->setVisible(!operations);
+        remove->setVisible(operations);removeSelected->setVisible(operations);detailsButton->setVisible(operations);
+        eventImagesButton->setVisible(!operations);eventPlayButton->setVisible(!operations);
+        page=1;reload();
     });
     connect(removeSelected,&QPushButton::clicked,this,[this]{
         if(!isEnabled()||tabs->currentIndex()!=0)return;
@@ -79,14 +95,14 @@ OperationLogPage::OperationLogPage(const QSqlDatabase &db,QWidget *parent):QWidg
         QString error;if(!service.deleteIds(ids,true,error)){status->setText(error);return;}reload();
     });
     connect(images,&QPushButton::clicked,this,[this]{
-        const int row=events->currentRow();if(tabs->currentIndex()==1&&row>=0&&row<currentEvents.size())emit eventImagesRequested(currentEvents[row].exceptionId);
+        const int row=selectedEventRow();
+        if(row>=0)emit eventImagesRequested(currentEvents[row].exceptionId);
     });
-    connect(events,&QTableWidget::currentCellChanged,this,[this](int row,int,int,int){
-        if(isEnabled() && tabs->currentIndex()==1 && row>=0 && row<currentEvents.size()
-                && currentEvents[row].videoId>0) emit playbackRequested(currentEvents[row].videoId,0);
-    });
-    connect(play,&QPushButton::clicked,this,[this]{
-        const int row=events->currentRow();if(tabs->currentIndex()==1&&row>=0&&row<currentEvents.size()&&currentEvents[row].videoId>0)emit playbackRequested(currentEvents[row].videoId,0);
+    connect(events,&QTableWidget::itemSelectionChanged,this,&OperationLogPage::updateEventActions);
+    connect(events,&QTableWidget::currentCellChanged,this,&OperationLogPage::updateEventActions);
+    connect(play,&QPushButton::clicked,this,&OperationLogPage::playSelectedEvent);
+    connect(events,&QTableWidget::cellDoubleClicked,this,[this](int row,int column){
+        events->setCurrentCell(row,column);playSelectedEvent();
     });
     actions->addWidget(previous);actions->addWidget(next);actions->addStretch();actions->addWidget(remove);root->addLayout(actions);
     connect(search,&QPushButton::clicked,this,[this]{page=1;reload();});
@@ -106,6 +122,12 @@ void OperationLogPage::reload() {
     table->clearSelection();
     table->setCurrentCell(-1,-1);
     updateDetailsAction();
+    {
+        const QSignalBlocker blocker(events);
+        events->clearSelection();events->setCurrentCell(-1,-1);events->setRowCount(0);
+        currentEvents.clear();
+    }
+    updateEventActions();
     if(tabs->currentIndex()==1){
         QString error;
         if(!service.queryEvents(channel->currentData().toInt(),from->dateTime(),to->dateTime(),page,50,currentEvents,error)){
@@ -115,14 +137,27 @@ void OperationLogPage::reload() {
         events->clearSelection();events->setCurrentCell(-1,-1);
         events->setRowCount(currentEvents.size());
         for(int i=0;i<currentEvents.size();++i){
-            const auto &e=currentEvents[i];const QStringList values={QString::number(e.exceptionId),e.eventTime.toString("yyyy-MM-dd HH:mm:ss"),QString::number(e.channelId),e.status,QString::number(e.videoId)};
-            for(int c=0;c<5;++c){events->setItem(i,c,new QTableWidgetItem(values[c]));events->item(i,c)->setToolTip(QString("事件 %1\n通道 %2\n时间 %3\n状态 %4\n选中后直接回放").arg(e.exceptionId).arg(e.channelId).arg(e.eventTime.toString("yyyy-MM-dd HH:mm:ss")).arg(e.status));}
+            const auto &e=currentEvents[i];
+            const QString state=e.status=="complete"?"已完成":e.status=="interrupted"?"已中断":e.status=="recording"?"录制中":e.status;
+            const QStringList values={QString::number(e.exceptionId),e.eventTime.toString("yyyy-MM-dd HH:mm:ss"),QString("通道 %1").arg(e.channelId),state,e.videoId>0?"可回放":"无关联录像"};
+            for(int c=0;c<5;++c){events->setItem(i,c,new QTableWidgetItem(values[c]));events->item(i,c)->setToolTip(QString("事件 %1\n通道 %2\n时间 %3\n状态 %4\n选中后查看图片，双击播放录像").arg(e.exceptionId).arg(e.channelId).arg(e.eventTime.toString("yyyy-MM-dd HH:mm:ss")).arg(e.status));}
         }
-        status->setText(QString("事件第 %1 页，%2 条").arg(page).arg(currentEvents.size()));return;
+        status->setText(QString("第 %1 页，%2 个事件 · 选中后查看图片或播放录像").arg(page).arg(currentEvents.size()));return;
     }
-    OperationLogFilter filter;filter.from=from->dateTime();filter.to=to->dateTime();filter.adminId=admin->value();filter.operationFunc=function->text().trimmed();
+    QStringList names;QString namesError;
+    if(!service.operationNames(names,namesError)) {table->setRowCount(0);status->setText(namesError);return;}
+    const QString selected=function->currentData().toString();
+    {
+        const QSignalBlocker blocker(function);
+        function->clear();function->addItem("全部操作",QString());
+        for(const auto &name:names)function->addItem(name,name);
+        // 所选操作被删除时仍保持筛选语义，用户可主动切回全部。
+        if(!selected.isEmpty() && function->findData(selected)<0)function->addItem(selected,selected);
+        function->setCurrentIndex(qMax(0,function->findData(selected)));
+    }
+    OperationLogFilter filter;filter.from=from->dateTime();filter.to=to->dateTime();filter.adminId=admin->value();filter.operationFunc=function->currentData().toString();
     QList<OperationLogEntry> rows;QString error;
-    if(!service.query(filter,rows,error,page,50)){status->setText(error);return;}
+    if(!service.query(filter,rows,error,page,50)){table->setRowCount(0);status->setText(error);return;}
     table->setRowCount(rows.size());
     for(int i=0;i<rows.size();++i){
         const auto &entry=rows[i];QStringList values={QString::number(entry.id),entry.operationTime.toString("yyyy-MM-dd HH:mm:ss"),QString::number(entry.adminId),entry.operationFunc,entry.operationDesc};
@@ -197,6 +232,7 @@ void OperationLogPage::changeEvent(QEvent *event)
     if(event->type()==QEvent::EnabledChange) {
         if(!isEnabled() && detailsDialog)detailsDialog->close();
         updateDetailsAction();
+        updateEventActions();
     }
 }
 
@@ -205,4 +241,26 @@ void OperationLogPage::hideEvent(QHideEvent *event)
 {
     if(detailsDialog)detailsDialog->close();
     QWidget::hideEvent(event);
+}
+
+// 当前行不等于已选择：取消选择、刷新或注销后不允许跳转旧事件。
+int OperationLogPage::selectedEventRow() const
+{
+    const int row=events->currentRow();
+    if(!isEnabled() || tabs->currentIndex()!=1 || row<0 || row>=currentEvents.size())return -1;
+    const auto item=events->item(row,0);
+    return item && item->isSelected()?row:-1;
+}
+void OperationLogPage::updateEventActions()
+{
+    const int row=selectedEventRow();
+    eventImagesButton->setEnabled(row>=0);
+    eventPlayButton->setEnabled(row>=0 && currentEvents[row].videoId>0);
+    eventPlayButton->setToolTip(row<0?"请先选择一个事件":currentEvents[row].videoId>0?
+        "播放所选事件对应的录像，也可双击事件行":"此事件没有关联录像");
+}
+void OperationLogPage::playSelectedEvent()
+{
+    const int row=selectedEventRow();
+    if(row>=0 && currentEvents[row].videoId>0)emit playbackRequested(currentEvents[row].videoId,0);
 }

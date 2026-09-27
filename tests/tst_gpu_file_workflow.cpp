@@ -15,6 +15,9 @@
 #include <opencv2/videoio.hpp>
 #include "testdatabase.h"
 #include "../view/mainwidget.h"
+#include "../service/channelconfigservice.h"
+#include "../model/videomodel.h"
+#include "../service/sourceanalysisworker.h"
 #include "../service/channelconfigpolicy.h"
 class GpuFileWorkflowTests: public QObject {
  Q_OBJECT
@@ -40,7 +43,7 @@ private slots:
       MainWidget widget;widget.show();widget.setLoggedInUser(17,"admin17");
       connect(&widget,&MainWidget::previewFramePresented,[&](int ch){++frames[ch-1];});
       connect(&widget,&MainWidget::detectionCycleCompleted,[&](int,qint64){++cycles;});
-      QVERIFY(QMetaObject::invokeMethod(&widget,"start_configured_previews"));
+      QVERIFY(QMetaObject::invokeMethod(widget.findChild<QObject*>("monitoringController"),"start_configured_previews"));
       auto sourceList=widget.findChild<QListWidget*>("sourceEventList");QVERIFY(sourceList);
       QElapsedTimer clock;clock.start();qint64 last=0;QTimer pulse;
       connect(&pulse,&QTimer::timeout,[&]{auto now=clock.elapsed();auto gap=now-last;gaps<<gap;maxGap=qMax(maxGap,gap);last=now;});
@@ -52,17 +55,17 @@ private slots:
       auto row=sourceList->item(0)->data(Qt::UserRole).value<SourceEventRow>();
       sourceList->setCurrentRow(0);
       sourceList->itemClicked(sourceList->item(0));
-      QVERIFY(QMetaObject::invokeMethod(&widget,"stop_playback"));
+      QVERIFY(QMetaObject::invokeMethod(widget.findChild<QWidget*>("playbackPage"),"stop_playback"));
       QTest::qWait(500);
       auto player=widget.findChild<QMediaPlayer*>();QVERIFY(player);
       QVERIFY(player->source().isEmpty());
-      QVERIFY(QMetaObject::invokeMethod(&widget,"play_selected_record"));
+      QVERIFY(QMetaObject::invokeMethod(widget.findChild<QWidget*>("playbackPage"),"play_selected_record"));
       QTRY_COMPARE_WITH_TIMEOUT(player->source(),QUrl::fromLocalFile(source),5000);
       QTRY_VERIFY_WITH_TIMEOUT(player->duration()>0,5000);
       QCOMPARE(player->error(),QMediaPlayer::NoError);
-      QVERIFY(QMetaObject::invokeMethod(&widget,"pause_playback"));
+      QVERIFY(QMetaObject::invokeMethod(widget.findChild<QWidget*>("playbackPage"),"pause_playback"));
       QCOMPARE(player->playbackState(),QMediaPlayer::PausedState);
-      QVERIFY(QMetaObject::invokeMethod(&widget,"resume_playback"));
+      QVERIFY(QMetaObject::invokeMethod(widget.findChild<QWidget*>("playbackPage"),"resume_playback"));
       QTRY_COMPARE(player->playbackState(),QMediaPlayer::PlayingState);
       QTRY_VERIFY_WITH_TIMEOUT(widget.findChild<QVideoWidget*>()->videoSink()->videoFrame().isValid(),5000);
       const QString capture=qEnvironmentVariable("SMART_MONITOR_UI_CAPTURE_DIR");
@@ -76,7 +79,7 @@ private slots:
     QVERIFY(original.open(QIODevice::ReadOnly));QCryptographicHash afterHash(QCryptographicHash::Sha256);QVERIFY(afterHash.addData(&original));original.close();QCOMPARE(afterHash.result(),originalHash.result());
     {
       MainWidget restarted;restarted.show();restarted.setLoggedInUser(17,"admin17");QSignalSpy cyclesAfter(&restarted,&MainWidget::detectionCycleCompleted);
-      QVERIFY(QMetaObject::invokeMethod(&restarted,"start_configured_previews"));
+      QVERIFY(QMetaObject::invokeMethod(restarted.findChild<QObject*>("monitoringController"),"start_configured_previews"));
       QTRY_VERIFY_WITH_TIMEOUT(restarted.findChild<QListWidget*>("sourceEventList")->count()>0,5000);
       QTest::qWait(500);QCOMPARE(cyclesAfter.count(),0);
     }

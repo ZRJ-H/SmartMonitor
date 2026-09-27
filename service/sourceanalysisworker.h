@@ -8,12 +8,7 @@
 #include <QRect>
 #include <memory>
 #include <atomic>
-struct SourceEventRow {
-    QString key,path,image,channels,asset,analysis,analyzedAt;
-    qint64 startMs=0,endMs=0;double confidence=0;
-};
-Q_DECLARE_METATYPE(SourceEventRow)
-Q_DECLARE_METATYPE(QList<SourceEventRow>)
+#include "sourceeventrow.h"
 // This object's entire decoder/index/model state lives on its worker thread.
 // Only requestPosition()/cancel() are thread-safe cross-thread entry points.
 class SourceAnalysisWorker:public QObject {

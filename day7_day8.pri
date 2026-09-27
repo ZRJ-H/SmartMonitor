@@ -33,3 +33,5 @@ HEADERS += $$PWD/service/backupservice.h
 
 SOURCES += $$PWD/service/storageworker.cpp $$PWD/service/sourceanalysisworker.cpp
 HEADERS += $$PWD/service/storageworker.h $$PWD/service/sourceanalysisworker.h
+
+HEADERS += $$PWD/service/sourceeventrow.h

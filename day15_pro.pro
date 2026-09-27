@@ -36,7 +36,6 @@ SOURCES += \
     util/verifycodelabel.cpp \
     view/loginwidget.cpp \
     view/videolabel.cpp \
-    view/mainwidget.cpp \
     view/mywidget.cpp
 
 HEADERS += \
@@ -91,3 +90,5 @@ RESOURCES += resources.qrc
 include($$PWD/day7_day8.pri)
 
 HEADERS += view/apptheme.h service/detectionworker.h
+
+include($$PWD/view/mainwidget.pri)

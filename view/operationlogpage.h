@@ -8,7 +8,6 @@
 #include <QPointer>
 #include "../service/operationlogservice.h"
 class QDateTimeEdit;
-class QLineEdit;
 class QSpinBox;
 class QTableWidget;
 class QLabel;
@@ -31,8 +30,13 @@ protected:
     void hideEvent(QHideEvent *event) override;
 private slots:
     void showSelectedDetails();
+    void playSelectedEvent();
 private:
     void updateDetailsAction();
+    void updateEventActions();
+    int selectedEventRow() const;
+    QPushButton *eventImagesButton = nullptr;
+    QPushButton *eventPlayButton = nullptr;
     QPushButton *detailsButton = nullptr;
     QPointer<QDialog> detailsDialog;
     QTabWidget *tabs;
@@ -42,7 +46,7 @@ private:
     OperationLogService service;
     QDateTimeEdit *from,*to;
     QSpinBox *admin;
-    QLineEdit *function;
+    QComboBox *function;
     QTableWidget *table;
     QLabel *status;
     int page=1;

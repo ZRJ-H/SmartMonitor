@@ -1,5 +1,8 @@
 #include <QtTest>
 #include <QClipboard>
+#include <QComboBox>
+#include <QSpinBox>
+#include <QDateTimeEdit>
 #include <QDialog>
 #include <QFontDatabase>
 #include <QLabel>
@@ -37,20 +40,60 @@ private slots:
     }
     void cleanup() {db.close();db=QSqlDatabase();QSqlDatabase::removeDatabase(connection);}
 
-    void selectingEventPlaysAndReloadDoesNotPlayStaleSelection() {
+    void eventSelectionRequiresExplicitPlaybackAndRejectsStaleSelection() {
         QSqlQuery q(db);
         QVERIFY(q.exec("INSERT INTO exception_log VALUES(1,2,'2026-09-24T12:00:00','complete','event.mp4')"));
         QVERIFY(q.exec("INSERT INTO video VALUES(33,'event.mp4')"));
         QVERIFY(q.exec("INSERT INTO event_media_link VALUES(1,33)"));
         OperationLogPage page(db);page.show();
-        QSignalSpy spy(&page,&OperationLogPage::playbackRequested);
+        QSignalSpy playback(&page,&OperationLogPage::playbackRequested);
+        QSignalSpy images(&page,&OperationLogPage::eventImagesRequested);
         page.findChild<QTabWidget*>()->setCurrentIndex(1);
         auto events=page.findChild<QTableWidget*>("eventLogTable");QVERIFY(events);
-        QCOMPARE(events->rowCount(),1);QCOMPARE(spy.count(),0);
-        events->setCurrentCell(0,0);QCOMPARE(spy.count(),1);QCOMPARE(spy.first()[0].toLongLong(),qint64(33));
-        QVERIFY(!events->item(0,0)->toolTip().isEmpty());
-        page.reload();QCOMPARE(spy.count(),1);
-        QVERIFY(!page.findChild<QDialog*>("operationLogDetailsDialog"));
+        QCOMPARE(events->rowCount(),1);
+        events->setCurrentCell(0,0);
+        QCOMPARE(playback.count(),0); // 选中只选择，显式播放才导航。
+        auto play=page.findChild<QPushButton*>("playEventVideoButton");QVERIFY(play);
+        auto pictures=page.findChild<QPushButton*>("viewEventImagesButton");QVERIFY(pictures);
+        QVERIFY(play->isEnabled());QVERIFY(pictures->isEnabled());
+        play->click();QCOMPARE(playback.count(),1);QCOMPARE(playback.first()[0].toLongLong(),qint64(33));
+        pictures->click();QCOMPARE(images.count(),1);QCOMPARE(images.first()[0].toLongLong(),qint64(1));
+        events->clearSelection();QVERIFY(!play->isEnabled());QVERIFY(!pictures->isEnabled());
+        events->selectRow(0);page.reload();QVERIFY(!play->isEnabled());QVERIFY(!pictures->isEnabled());
+        QCOMPARE(playback.count(),1);
+        events->selectRow(0);page.setEnabled(false);play->click();pictures->click();
+        QCOMPARE(playback.count(),1);QCOMPARE(images.count(),1);
+    }
+    void filtersBelongToTheirTabAndOperationChoicesMatchStoredNames() {
+        QVERIFY(insertLog("detail")>0);
+        OperationLogService service(db);QString error;
+        QVERIFY(service.record(3,"登录","success",QDateTime(QDate(2026,9,24),QTime(14,0)),error));
+        OperationLogPage page(db);page.reload();page.show();
+        auto operations=page.findChild<QComboBox*>("operationFilter");QVERIFY(operations);
+        auto channel=page.findChild<QComboBox*>("eventChannelFilter");QVERIFY(channel);
+        auto tabs=page.findChild<QTabWidget*>();
+        QVERIFY(!operations->isHidden());QVERIFY(channel->isHidden());
+        QCOMPARE(operations->count(),3);QVERIFY(operations->findData("登录")>0);
+        operations->setCurrentIndex(operations->findData("登录"));page.reload();
+        auto table=page.findChild<QTableWidget*>("operationLogTable");
+        QCOMPARE(table->rowCount(),1);QCOMPARE(table->item(0,3)->text(),QString("登录"));
+        tabs->setCurrentIndex(1);QVERIFY(operations->isHidden());QVERIFY(!channel->isHidden());
+        QVERIFY(page.findChild<QSpinBox*>()->isHidden());
+        tabs->setCurrentIndex(0);QCOMPARE(operations->currentData().toString(),QString("登录"));
+        QCOMPARE(table->rowCount(),1);
+    }
+    void eventWithoutVideoAndFailedQueryDisablePlayback() {
+        QSqlQuery q(db);
+        QVERIFY(q.exec("INSERT INTO exception_log VALUES(1,2,'2026-09-24T12:00:00','interrupted','')"));
+        OperationLogPage page(db);page.show();page.findChild<QTabWidget*>()->setCurrentIndex(1);
+        auto events=page.findChild<QTableWidget*>("eventLogTable");
+        auto play=page.findChild<QPushButton*>("playEventVideoButton");QVERIFY(play);
+        auto pictures=page.findChild<QPushButton*>("viewEventImagesButton");QVERIFY(pictures);
+        events->selectRow(0);QVERIFY(!play->isEnabled());QVERIFY(pictures->isEnabled());
+        QCOMPARE(events->item(0,3)->text(),QString("已中断"));
+        QCOMPARE(events->item(0,4)->text(),QString("无关联录像"));
+        QVERIFY(q.exec("DROP TABLE exception_log"));page.reload();
+        QCOMPARE(events->rowCount(),0);QVERIFY(!play->isEnabled());QVERIFY(!pictures->isEnabled());
     }
     void buttonShowsFullPlainTextAndCopiesIt() {
         const QString description="C:/监控记录/"+QString("very-long-path/").repeated(40)+"录像.mp4\n<b>原样显示</b>\n第二行详情";

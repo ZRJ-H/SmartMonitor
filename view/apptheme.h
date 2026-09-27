@@ -77,7 +77,7 @@ QPushButton#navButton, QPushButton#imagesNavigation, QPushButton#logsNavigation 
 QPushButton#navButton:hover, QPushButton#imagesNavigation:hover, QPushButton#logsNavigation:hover {
     background-color: #405570;
 }
-QPushButton#navButton:checked { background-color: #24579a; border-color: #93c5fd; }
+QPushButton#navButton:checked, QPushButton#imagesNavigation:checked, QPushButton#logsNavigation:checked { background-color: #24579a; border-color: #93c5fd; }
 QPushButton#loginButton { background-color: #24579a; border: 2px solid #6fa5ee; border-radius: 33px; font-weight: bold; }
 QPushButton#loginButton:hover { background-color: #2e64a9; }
 QPushButton#videoRecordRefreshButton, QPushButton#refreshCamerasButton,
@@ -97,6 +97,10 @@ QLineEdit, QComboBox, QAbstractSpinBox, QTextEdit, QPlainTextEdit {
     color: #f1f5f9; background-color: #151b24; border: 1px solid #64748b;
     border-radius: 4px; padding: 5px; selection-background-color: #24579a; selection-color: #ffffff;
 }
+QTabWidget::pane { border: 1px solid #536174; background-color: #151b24; }
+QTabBar::tab { color: #f1f5f9; background-color: #283544; border: 1px solid #536174; padding: 8px 14px; }
+QTabBar::tab:selected { color: #ffffff; background-color: #24579a; }
+QTabBar::tab:disabled { color: #a0aec0; background-color: #252e3b; }
 QLineEdit { placeholder-text-color: #b5c2d3; }
 QLineEdit:focus, QComboBox:focus, QAbstractSpinBox:focus, QTextEdit:focus, QPlainTextEdit:focus {
     border: 1px solid #93c5fd;
@@ -186,6 +190,10 @@ QLabel { color: #172536; background-color: transparent; border: none; }
 QLabel#loginTitle { color: #172536; font-size: 28px; font-weight: bold; }
 QLabel#tipLabel { color: #45566b; font-size: 13px; }
 QLineEdit { min-height: 38px; border: 1px solid #64748b; border-radius: 6px; padding: 0 10px; background-color: #ffffff; color: #172536; selection-background-color: #24579a; selection-color: #ffffff; }
+QTabWidget::pane { border: 1px solid #536174; background-color: #151b24; }
+QTabBar::tab { color: #f1f5f9; background-color: #283544; border: 1px solid #536174; padding: 8px 14px; }
+QTabBar::tab:selected { color: #ffffff; background-color: #24579a; }
+QTabBar::tab:disabled { color: #a0aec0; background-color: #252e3b; }
 QLineEdit { placeholder-text-color: #536579; }
 QLineEdit:focus { border: 2px solid #24579a; }
 QPushButton { min-height: 38px; border: 1px solid #64748b; border-radius: 6px; padding: 0 8px; background-color: #e2e8f0; color: #172536; }

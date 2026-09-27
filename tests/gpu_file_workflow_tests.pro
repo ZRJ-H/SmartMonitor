@@ -26,7 +26,6 @@ SOURCES += \
     $$PWD/../util/verifycodelabel.cpp \
     $$PWD/../view/loginwidget.cpp \
     $$PWD/../view/videolabel.cpp \
-    $$PWD/../view/mainwidget.cpp \
     $$PWD/../view/mywidget.cpp
 
 HEADERS += \
@@ -59,3 +58,5 @@ include($$PWD/../day7_day8.pri)
 
 HEADERS += ../view/apptheme.h
 RESOURCES += ../resources.qrc
+
+include($$PWD/../view/mainwidget.pri)

@@ -7,6 +7,7 @@
 
 #include <QDateTime>
 #include <QList>
+#include <QStringList>
 #include <QSqlDatabase>
 
 struct OperationLogEntry
@@ -43,6 +44,7 @@ public:
     bool insert(OperationLogEntry &entry, QString &errorText);
     bool query(const OperationLogFilter &filter, QList<OperationLogEntry> &entries,
                QString &errorText, int page, int pageSize) const;
+    bool operationNames(QStringList &names, QString &errorText) const;
     bool removeIds(const QList<qint64> &ids, QString &errorText);
     bool queryEvents(int channelId,const QDateTime &from,const QDateTime &to,int page,int pageSize,
                      QList<EventLogEntry> &entries,QString &errorText) const;

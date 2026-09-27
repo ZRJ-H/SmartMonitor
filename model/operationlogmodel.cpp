@@ -128,3 +128,15 @@ bool OperationLogModel::queryEvents(int channelId,const QDateTime &from,const QD
     }
     entries=result;return true;
 }
+
+// 提供真实出现过的操作名称，界面无需让用户猜测可查询的文字。
+bool OperationLogModel::operationNames(QStringList &names, QString &errorText) const
+{
+    names.clear();errorText.clear();
+    QSqlQuery query(db);
+    if (!query.exec("SELECT DISTINCT operation_func FROM operation_log WHERE operation_func <> '' ORDER BY operation_func")) {
+        errorText=query.lastError().text();return false;
+    }
+    while(query.next()) names.append(query.value(0).toString());
+    return true;
+}
