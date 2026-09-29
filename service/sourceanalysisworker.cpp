@@ -74,7 +74,7 @@ void SourceAnalysisWorker::configure(int channel,const QString &path,bool enable
         const QFileInfo before(path);require(before.isFile(),"原视频不存在："+path);
         QString asset=hashFile(path);const QFileInfo after(path);
         require(before.size()==after.size()&&before.lastModified()==after.lastModified(),"散列时源文件发生变化");
-        const QString profile=hashFile(model)+"|stretch640-person-v1|"+QString::number(confidence,'g',17)+"|sample500-gap3000-one-image-v1";
+        const QString profile=hashFile(model)+"|"+DetectionWorker::analysisProfile()+"|"+QString::number(confidence,'g',17)+"|sample500-gap3000-one-image-v1";
         const QString key=digest((asset+"|"+profile).toUtf8());
         exec("INSERT INTO assets(asset,path,size,modified) VALUES(?,?,?,?) ON CONFLICT(asset) DO UPDATE SET path=excluded.path,size=excluded.size,modified=excluded.modified",{asset,after.absoluteFilePath(),after.size(),after.lastModified().toMSecsSinceEpoch()});
         exec("INSERT OR IGNORE INTO analyses(analysis,asset,profile,status,analyzed_at) VALUES(?,?,?,'running',?)",{key,asset,profile,QDateTime::currentDateTime().toString(Qt::ISODateWithMs)});
@@ -87,7 +87,7 @@ void SourceAnalysisWorker::configure(int channel,const QString &path,bool enable
             QSqlQuery q(db_);q.prepare("SELECT status,next_ms,sample,active_sample,active_start,last_positive FROM analyses WHERE analysis=?");q.addBindValue(key);require(q.exec()&&q.next(),q.lastError().text());
             job->status=q.value(0).toString();job->nextMs=q.value(1).toLongLong();job->sample=q.value(2).toLongLong();job->activeSample=q.value(3).toLongLong();job->activeStart=q.value(4).toLongLong();job->lastPositive=q.value(5).toLongLong();
             if(job->status!="complete"){
-                const QString configureError=job->detector.configure(true,model,confidence);require(configureError.isEmpty(),configureError);
+                const QString configureError=job->detector.configure(true,model,confidence,gpu_enabled_?"auto":"cpu");require(configureError.isEmpty(),configureError);
                 require(job->capture.open(job->path.toStdString(),cv::CAP_FFMPEG,std::vector<int>{cv::CAP_PROP_N_THREADS,2}),"无法打开原视频分析");
                 job->status="running";job->backend=job->detector.backend();
                 emit message(channel,"文件分析中（每 0.5 秒取样）："+job->detector.backend());
@@ -96,6 +96,21 @@ void SourceAnalysisWorker::configure(int channel,const QString &path,bool enable
         }else emit message(channel,"复用同一原视频的分析任务");
         refresh();timer_.start(0);
     }catch(const std::exception &e){channels_.remove(channel);emit message(channel,"文件分析失败："+QString::fromUtf8(e.what()));}
+}
+void SourceAnalysisWorker::setGpuEnabled(bool enabled){
+    if(cancelled_.load() || gpu_enabled_==enabled)return;
+    gpu_enabled_=enabled;
+    const QString mode=enabled?QStringLiteral("auto"):QStringLiteral("cpu");
+    // A job can serve several channels. Switch once, between samples, without
+    // recreating decoders, analyses, events or screenshots.
+    for(auto &job:jobs_){
+        if(job->status!="running")continue;
+        const QString error=job->detector.configure(true,job->model,job->threshold,mode);
+        job->backend=job->detector.backend();
+        for(auto it=channels_.cbegin();it!=channels_.cend();++it)if(it.value()==job->key)
+            emit message(it.key(),error.isEmpty()?"检测后端："+job->backend
+                :"后端切换失败，保留原后端："+job->backend+"；"+error);
+    }
 }
 void SourceAnalysisWorker::requestPosition(int channel,qint64 pts,quint64 generation){
     QMutexLocker l(&positionMutex_);positions_[channel]={pts,generation};

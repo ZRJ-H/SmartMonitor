@@ -1,4 +1,5 @@
 #include <QtTest>
+#include <QScopeGuard>
 #include <QTemporaryDir>
 #include <QThread>
 #include <QSqlQuery>
@@ -33,6 +34,32 @@ private:
    for(int i=0;i<70;++i)out.write(withPeople&&(i<15||i>=55)?person:cv::Mat::zeros(person.size(),person.type()));
  }
 private slots:
+ void hotSwitchKeepsAnalysisTimeline(){
+   QTemporaryDir dir;const QString source=dir.filePath("switch.avi"),index=dir.filePath("index");createClip(source);
+   Harness h(index);QSignalSpy done(h.worker,&SourceAnalysisWorker::analysisFinished);
+   QSignalSpy messages(h.worker,&SourceAnalysisWorker::message);
+   int cycles=0;
+   connect(h.worker,&SourceAnalysisWorker::inferenceCompleted,this,[&](int,qint64){
+     ++cycles;
+     if(cycles==1 || cycles==4 || cycles==7 || cycles==10){
+       const bool gpu=cycles==1 || cycles==7;
+       QMetaObject::invokeMethod(h.worker,[w=h.worker,gpu]{w->setGpuEnabled(gpu);},Qt::QueuedConnection);
+     }
+   });
+   h.start(1,source,model);
+   QTRY_COMPARE_WITH_TIMEOUT(done.count(),1,30000);
+   QCOMPARE(done.first()[1].toInt(),2);
+   QCOMPARE(number(index,"SELECT COUNT(*) FROM analyses"),1);
+   QCOMPARE(number(index,"SELECT COUNT(*) FROM samples"),14);
+   QCOMPARE(number(index,"SELECT COUNT(*) FROM events"),2);
+   bool gpu=false,cpuAfterGpu=false;
+   for(const auto &row:messages){const auto message=row[1].toString();
+     QVERIFY2(!message.contains("失败"),qPrintable(message));
+     if(message.contains("GPU / DirectML"))gpu=true;
+     if(gpu&&message.contains("CPU / OpenCV"))cpuAfterGpu=true;
+   }
+   QVERIFY(gpu);QVERIFY(cpuAfterGpu);
+ }
  void initTestCase(){
    cv::setNumThreads(4);model=qEnvironmentVariable("SMART_MONITOR_TEST_MODEL");video=qEnvironmentVariable("SMART_MONITOR_TEST_VIDEO");
    if(model.isEmpty()||video.isEmpty())QSKIP("Real YOLO/media inputs required for source-index integration");
@@ -87,6 +114,35 @@ private slots:
      QCOMPARE(number(index,"SELECT COUNT(*) FROM samples"),14);QCOMPARE(number(index,"SELECT COUNT(*) FROM events"),2);
    }
    QCOMPARE(QDir(index+"/screenshots").entryList({"*.jpg"},QDir::Files).size(),2);
+ }
+ void legacyUnfilteredIndexIsPreservedButNotReused(){
+   QTemporaryDir dir;const QString source=dir.filePath("legacy.avi"),index=dir.filePath("index");createClip(source);
+   // 用失败请求只建立临时索引结构，不接触应用的真实索引。
+   {Harness h(index);QSignalSpy errors(h.worker,&SourceAnalysisWorker::message);
+    h.start(1,dir.filePath("missing.avi"),model);QTRY_VERIFY_WITH_TIMEOUT(errors.count()>0,5000);}
+   const QString asset=QString::fromLatin1(fileHash(source).toHex());
+   const QString profile=QString::fromLatin1(fileHash(model).toHex())+"|stretch640-person-v1|0.5|sample500-gap3000-one-image-v1";
+   const QString legacyKey=QString::fromLatin1(QCryptographicHash::hash((asset+"|"+profile).toUtf8(),QCryptographicHash::Sha256).toHex());
+   const QString name=QUuid::createUuid().toString();
+   {const auto cleanup=qScopeGuard([&]{QSqlDatabase::removeDatabase(name);});
+    auto db=QSqlDatabase::addDatabase("QSQLITE",name);db.setDatabaseName(index+"/source-index.sqlite");QVERIFY(db.open());
+    auto execute=[&](const QString &sql,const QVariantList &args){QSqlQuery q(db);if(!q.prepare(sql))return false;for(auto a:args)q.addBindValue(a);return q.exec();};
+    const QFileInfo file(source);
+    QVERIFY(execute("INSERT INTO assets(asset,path,size,modified) VALUES(?,?,?,?)",{asset,source,file.size(),file.lastModified().toMSecsSinceEpoch()}));
+    QVERIFY(execute("INSERT INTO analyses(analysis,asset,profile,status,analyzed_at) VALUES(?,?,?,'complete','legacy')",{legacyKey,asset,profile}));
+    QVERIFY(execute("INSERT INTO samples(analysis,sample,pts,boxes) VALUES(?,0,0,'[[1,1,20,30],[1,1,20,30]]')",{legacyKey}));
+    QVERIFY(execute("INSERT INTO channel_analysis(channel,analysis) VALUES(1,?)",{legacyKey}));
+   }
+   {Harness h(index);QSignalSpy done(h.worker,&SourceAnalysisWorker::analysisFinished);QSignalSpy cycles(h.worker,&SourceAnalysisWorker::inferenceCompleted);
+    h.start(1,source,model);QTRY_COMPARE_WITH_TIMEOUT(done.count(),1,30000);QVERIFY(cycles.count()>0);
+    QCOMPARE(number(index,"SELECT COUNT(*) FROM analyses"),2);
+    QCOMPARE(number(index,"SELECT COUNT(*) FROM samples WHERE analysis='"+legacyKey+"'"),1);
+    QCOMPARE(number(index,"SELECT COUNT(*) FROM channel_analysis WHERE analysis='"+legacyKey+"'"),0);
+    QCOMPARE(number(index,"SELECT COUNT(*) FROM samples WHERE analysis=(SELECT analysis FROM channel_analysis WHERE channel=1)"),14);
+   }
+   // 新版结果可在重启后正常复用，不会每次启动重新分析。
+   {Harness h(index);QSignalSpy listed(h.worker,&SourceAnalysisWorker::eventsReady);QSignalSpy cycles(h.worker,&SourceAnalysisWorker::inferenceCompleted);
+    h.start(1,source,model);QTRY_VERIFY_WITH_TIMEOUT(listed.count()>0,10000);QTest::qWait(200);QCOMPARE(cycles.count(),0);}
  }
  void invalidModelCannotCompleteAnalysis(){
    QTemporaryDir dir;createClip(dir.filePath("bad.avi"));Harness h(dir.filePath("index"));QSignalSpy errors(h.worker,&SourceAnalysisWorker::message);

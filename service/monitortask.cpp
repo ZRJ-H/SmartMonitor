@@ -54,8 +54,22 @@ void MonitorTask::configureCaptureInterval(int milliseconds)
 }
 
 // 更新检测开关、路径和阈值并加载模型；失败关闭检测但不停止普通采集。
+void MonitorTask::setGpuEnabled(bool enabled)
+{
+    if (gpu_enabled_ == enabled) return;
+    gpu_enabled_ = enabled;
+    if (detection_enabled_ && config_.sourceType == ChannelSourceType::Camera)
+        configureDetectionImpl(true, detection_model_path_, detection_confidence_, true);
+}
+
 void MonitorTask::configureDetection(bool enabled, const QString &modelPath,
                                      double confidence)
+{
+    configureDetectionImpl(enabled, modelPath, confidence, false);
+}
+
+void MonitorTask::configureDetectionImpl(bool enabled, const QString &modelPath,
+                                         double confidence, bool preserveEvent)
 {
     detection_enabled_ = enabled && config_.channelId >= 1 && config_.channelId <= 4;
     detection_model_path_ = modelPath.trimmed();
@@ -63,7 +77,7 @@ void MonitorTask::configureDetection(bool enabled, const QString &modelPath,
     const quint64 generation = ++detection_generation_;
     detection_ready_ = false;
     detection_boxes_.clear();
-    event_active_ = false;
+    if (!preserveEvent) event_active_ = false;
     detection_clock_.invalidate();
     if (detection_enabled_ && !QFileInfo::exists(detection_model_path_)) {
         detection_enabled_ = false;
@@ -76,8 +90,9 @@ void MonitorTask::configureDetection(bool enabled, const QString &modelPath,
     enabled = enabled && config_.sourceType == ChannelSourceType::Camera;
     const QString path = detection_model_path_;
     const double threshold = detection_confidence_;
-    QMetaObject::invokeMethod(worker, [this, worker, generation, enabled, path, threshold] {
-        const QString error = worker->configure(enabled, path, threshold);
+    const QString mode = gpu_enabled_ ? QStringLiteral("auto") : QStringLiteral("cpu");
+    QMetaObject::invokeMethod(worker, [this, worker, generation, enabled, path, threshold, mode] {
+        const QString error = worker->configure(enabled, path, threshold, mode);
         const QString backend=worker->backend();
         QMetaObject::invokeMethod(this, [this, generation, enabled, error, backend] {
             if (generation != detection_generation_) return;

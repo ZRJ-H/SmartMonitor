@@ -23,7 +23,9 @@ public:
         image_directory_ = path;
     }
     void setDetectionState(bool enabled, bool allowed);
+    void setGpuPreference(bool enabled);
 public slots:
+    void setResourceUsage(double cpu, double gpu, double memory);
     void display_frame(const cv::Mat& frame, int channel);
     void on_capture_state_changed(int channel, bool running);
     void show_capture_error(int channel, const QString& message);
@@ -34,6 +36,7 @@ public slots:
 signals:
     void refreshCamerasRequested();
     void detectionToggleRequested(bool enabled);
+    void gpuToggleRequested(bool enabled);
     void previewFramePresented(int channel);
     void auditRequested(const QString& action, const QString& detail);
 
@@ -58,6 +61,10 @@ private:
     QListWidget* device_list { };
     QLabel* lab_video_hint { };
     QLabel* lab_storage_warning { };
+    QLabel* resource_cpu_ { };
+    QLabel* resource_gpu_ { };
+    QLabel* resource_memory_ { };
     QCheckBox* detection_enabled_box_ { };
+    QCheckBox* gpu_enabled_box_ { };
 };
 #endif

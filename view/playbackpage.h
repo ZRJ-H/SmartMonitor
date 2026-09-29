@@ -55,6 +55,10 @@ private slots:
 
 private:
     void initUi();
+    void updatePlaybackControls();
+    void togglePlayStop();
+    void togglePauseResume();
+    bool playback_requested_ = false;
     bool require_permission(AuthPermission, const QString& action);
     bool load_video_page(int page);
     VideoQuery current_video_query() const;
@@ -68,8 +72,6 @@ private:
     QPushButton* btn_refresh_records;
     QPushButton* btn_play_record;
     QPushButton* btn_pause_playback;
-    QPushButton* btn_resume_playback;
-    QPushButton* btn_stop_playback;
     QPushButton* btn_playback_snapshot;
     QLabel* lab_playback_status;
     QListWidget* video_record_list;

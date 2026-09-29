@@ -44,6 +44,7 @@ public slots:
     void stopCapture();
     void setFileAnalysisBoxes(qint64 pts,quint64 generation,const QList<QRect> &boxes);
     void configureCaptureInterval(int milliseconds);
+    void setGpuEnabled(bool enabled); // Queue to the capture thread; never restarts capture.
     void configureDetection(bool enabled, const QString &modelPath,
                             double confidence);
 
@@ -67,6 +68,8 @@ signals:
                         const QDateTime &eventTime, double confidence);
 
 private:
+    void configureDetectionImpl(bool enabled, const QString &modelPath, double confidence, bool preserveEvent);
+    bool gpu_enabled_ = false;
     bool openFileCapture();
     bool readNextFrame(cv::Mat &frame);
     void publishFrame(const cv::Mat &frame);

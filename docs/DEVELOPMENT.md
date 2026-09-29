@@ -92,10 +92,23 @@ SQL 备份含配置和媒体索引，不含视频、图片、ONNX 文件本体�
 
 ## 2026-09-25 GPU 与文件事件变更
 
-本地文件不再重复编码录像；按内容和模型版本分析一次，每个去重事件保存一张代表截图，事件数量不限。回放定位原视频。摄像头仍走原录像链路。GPU 使用可选 ONNX Runtime DirectML，默认 auto，失败明确回退 CPU。部署、独立 SQLite 索引备份与验收边界见 [实施验证](verification/gpu-recording-2026-09-25.md) 和 [运行环境](runtime-setup.md)。
+本地文件不再重复编码录像；按内容和模型版本分析一次，每个去重事件保存一张代表截图，事件数量不限。回放定位原视频。摄像头仍走原录像链路。GPU 使用可选 ONNX Runtime DirectML，默认 CPU；监控页勾选“优先 GPU 加速”后使用 auto 策略，失败明确回退 CPU。部署、独立 SQLite 索引备份与验收边界见 [实施验证](verification/gpu-recording-2026-09-25.md) 和 [运行环境](runtime-setup.md)。
 
 ## MainWidget 组件导航（2026-09-27）
 
 MainWidget 只负责导航、会话和模块连接。独立页面为 view/playbackpage、monitorpage、settingspage；后台协调和维护位于 service/monitoringcontroller、maintenancecontroller。状态归属、信号流、分阶段验证与故障定位见 [组件拆分与审查记录](verification/mainwidget-components-2026-09-27.md)。
 
 主程序与两个集成测试统一 include view/mainwidget.pri。新增组件需更新此构建清单；不要向 MainWidget 暴露页面控件，不向控制器传入页面或 MainWidget 指针。
+
+### CPU/GPU 运行中切换（2026-09-29）
+
+登录后在监控页勾选“优先 GPU 加速”，取消勾选切回 CPU；无需停止采集、录像或重启应用。开关仅选择推理设备，人形检测仍由原开关控制。此偏好不落库，每次启动恢复 CPU。状态提示显示实际后端及回退原因；勾选表示优先请求 GPU，并不保证 GPU 可用。
+
+控制器公开 setGpuEnabled(bool)、gpuEnabled() 和 gpuPreferenceChanged(bool)；跨线程调用应使用 Qt 排队连接。下游 MonitorTask 和 SourceAnalysisWorker 的同名接口仅在各自工作线程调用。摄像头通过 generation 丢弃旧结果；文件分析在样本边界替换会话，保持既有索引。
+
+环境变量 SMART_MONITOR_DETECTION_BACKEND 仍支持独立检测工具的 cpu/auto/directml 模式（默认 cpu）；GUI 以会话内复选框为准，不修改进程环境变量。--gpu-check 仍执行严格 DirectML 检查。
+### 本程序资源指标
+
+监控页控制栏下方显示 CPU、GPU、内存百分比，每秒更新。标题“本程序资源占用”明确这些数值不是整机总占用。CPU 按所有逻辑处理器归一化；内存是本进程工作集占物理内存总量的比例（含共享页）；GPU 为当前 PID 最忙引擎的使用率，含推理、渲染和视频编解码。未就绪或不支持的指标显示“—”。详情也可悬停各指标查看。
+
+实现位于 service/resourcemonitor，Windows 下链接 pdh/psapi，在独立线程调用 GetProcessTimes、GetProcessMemoryInfo、GlobalMemoryStatusEx 及 PdhGetFormattedCounterArrayW。采样器不创建 PowerShell 子进程，不访问数据库。参考 [Microsoft PDH 数组采样接口](https://learn.microsoft.com/en-us/windows/win32/api/pdh/nf-pdh-pdhgetformattedcounterarrayw) 与 [进程工作集](https://learn.microsoft.com/en-us/windows/win32/procthread/process-working-set)。

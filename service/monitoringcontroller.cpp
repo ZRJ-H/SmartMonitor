@@ -3,6 +3,7 @@
 // 仅依赖后台服务和值对象，不访问窗口、控件或登录会话。
 
 #include "monitoringcontroller.h"
+#include "resourcemonitor.h"
 #include "../util/dbconn.h"
 #include "channelconfigpolicy.h"
 #include "monitortask.h"
@@ -20,6 +21,7 @@ MonitoringController::MonitoringController(QObject* parent)
     : QObject(parent)
 {
     setObjectName("monitoringController");
+
     recovery_directory_ = QDir(QStandardPaths::writableLocation(QStandardPaths::AppLocalDataLocation))
                               .filePath("pending-media");
 }
@@ -30,9 +32,19 @@ MonitoringController::~MonitoringController()
 void MonitoringController::initialize()
 {
     init_workers();
+    apply_gpu_preference();
+    if (!shutting_down_workers_ && !resource_monitor_) {
+        resource_monitor_ = new ResourceMonitor(this);
+        resource_monitor_->setObjectName("processResourceMonitor");
+        connect(resource_monitor_, &ResourceMonitor::usageReady,
+            this, &MonitoringController::resourceUsageReady);
+        resource_monitor_->start();
+    }
 }
 void MonitoringController::shutdown()
 {
+    delete resource_monitor_; // Destructor stops and joins before releasing its PDH query.
+    resource_monitor_ = nullptr;
     preview_delivery_enabled_.store(false);
     if (!monitor_threads_[0])
         return;
@@ -68,6 +80,27 @@ void MonitoringController::setDetection(bool enabled, const QString& model, doub
     yolo_model_path_ = model;
     detection_confidence_value_ = confidence;
     apply_detection_mode();
+}
+void MonitoringController::setGpuEnabled(bool enabled)
+{
+    if (shutting_down_workers_ || gpu_enabled_ == enabled) return;
+    gpu_enabled_ = enabled;
+    apply_gpu_preference();
+    emit gpuPreferenceChanged(enabled);
+    emit warning(enabled ? QStringLiteral("已请求 GPU 加速；检测启用后显示实际后端，不可用时回退 CPU。")
+                         : QStringLiteral("已请求 CPU 检测；切换在当前推理结束后生效。"));
+}
+void MonitoringController::apply_gpu_preference()
+{
+    const bool enabled = gpu_enabled_;
+    if (source_worker_)
+        QMetaObject::invokeMethod(source_worker_, [worker=source_worker_, enabled] {
+            worker->setGpuEnabled(enabled);
+        }, Qt::QueuedConnection);
+    for (auto task : monitor_tasks_)
+        if (task) QMetaObject::invokeMethod(task, [task, enabled] {
+            task->setGpuEnabled(enabled);
+        }, Qt::QueuedConnection);
 }
 void MonitoringController::requestRecovery()
 {

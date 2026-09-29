@@ -38,6 +38,7 @@ MainWidget::MainWidget(QWidget* parent)
     page_stack->addWidget(image_page_);
     page_stack->addWidget(log_page_);
     init_connect();
+
     if (!settings_page_->startupMessage().isEmpty())
         monitor_page_->showMessage(settings_page_->startupMessage());
     monitoring_->setChannels(settings_page_->channels());
@@ -114,6 +115,15 @@ void MainWidget::init_connect()
         &SettingsPage::refresh_camera_devices);
     connect(monitor_page_, &MonitorPage::detectionToggleRequested, settings_page_,
         &SettingsPage::setDetectionEnabled);
+    connect(monitor_page_, &MonitorPage::gpuToggleRequested, this, [this](bool enabled) {
+        if (require_permission(AuthPermission::Settings, "切换检测加速")) {
+            monitoring_->setGpuEnabled(enabled);
+            audit("检测加速", enabled ? "优先 GPU，失败回退 CPU" : "CPU");
+        }
+        monitor_page_->setGpuPreference(monitoring_->gpuEnabled());
+    });
+    connect(monitoring_, &MonitoringController::gpuPreferenceChanged,
+        monitor_page_, &MonitorPage::setGpuPreference);
     connect(settings_page_, &SettingsPage::channelsSaved, monitor_page_, &MonitorPage::setChannels);
     connect(settings_page_, &SettingsPage::channelsSaved, monitoring_, &MonitoringController::setChannels);
     connect(settings_page_, &SettingsPage::storageSaved, monitoring_, &MonitoringController::setStorage);
@@ -127,6 +137,8 @@ void MainWidget::init_connect()
     connect(settings_page_, &SettingsPage::warning, monitor_page_, &MonitorPage::showMessage);
     connect(settings_page_, &SettingsPage::detectionToggleRejected, this,
         [this](bool enabled) { monitor_page_->setDetectionState(enabled, monitoring_->detectionAllowed()); });
+    connect(monitoring_, &MonitoringController::resourceUsageReady,
+        monitor_page_, &MonitorPage::setResourceUsage);
     connect(monitoring_, &MonitoringController::warning, monitor_page_, &MonitorPage::showMessage);
     connect(monitoring_, &MonitoringController::operationFailed, this,
         [this](const QString& title, const QString& message) {

@@ -19,6 +19,7 @@ public:
     void requestPosition(int channel,qint64 pts,quint64 generation);
     void cancel(){cancelled_.store(true);}
 public slots:
+    void setGpuEnabled(bool enabled); // Worker-thread only; retains analysis checkpoints.
     void configure(int channel,const QString &path,bool enabled,const QString &model,double confidence);
     void listEvents(int page=0,int channel=0,bool history=false);
     void relocate(const QString &asset,const QString &path);
@@ -32,6 +33,7 @@ signals:
     void playbackResolved(const SourceEventRow &row,quint64 request,const QString &error);
     void analysisFinished(const QString &key,int eventCount);
 private:
+    bool gpu_enabled_ = false;
     struct Job;
     struct Position {qint64 pts=0;quint64 generation=0;};
     QString directory_,connectionName_;QSqlDatabase db_;QTimer timer_;

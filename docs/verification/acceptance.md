@@ -235,3 +235,40 @@ GPU 实际执行、CPU/GPU 对照、重启复用、文件替换拒绝回放、�
 - 日志页按标签展示有效筛选，操作名称改为真实名称列表；事件显式查看图片或播放录像，选中不再自动跳转，空选择/无录像/刷新失败状态有明确限制。修复图片和日志导航高亮，补齐页签对比度。
 - 增加隔离库回归及日志→事件图片/真实录像解码的主窗口集成验证；最终完整结果见 artifacts/verification/latest.json。
 - 审查发现、需求映射、定位入口与待办见 [项目审查记录](project-review-2026-09-27.md)。
+
+## 2026-09-27 YOLO 重复框与无效框修复
+
+- 先用确定性输出复现 3 项后处理失败，再补齐 NMS（IoU 0.45）、端点裁剪、无效候选过滤及有效框事件判定。保持容器、640 输入、模型、用户阈值和原采样频率不变，不采用每三帧检测。
+- 定向回归：后处理 13 项、真实模型/CPU-GPU 对照 5 项、文件索引 6 项通过。真实测试片段的三个采样点由 27/28/18 个候选分别去重为 3 个框。
+- 文件分析身份升级，测试验证旧索引保留但不复用、新版完成后可跨重启复用；无生产数据库迁移或用户媒体删除。
+- 完整构建/回归以最终 artifacts/verification/latest.json 为准；详细范围、复现与验收边界见 [检测框修复记录](yolo-nms-fix-2026-09-27.md)。真实摄像头精确率/召回率和长稳继续开放。
+## 2026-09-29 CPU/GPU 热切换
+
+- 启动默认 CPU；监控页增加“优先 GPU 加速”，运行中可取消切回 CPU，重启恢复 CPU。
+- 后台接口 MonitoringController::setGpuEnabled(bool)，gpuEnabled() 查询请求偏好，gpuPreferenceChanged(bool) 同步界面。实际后端及回退原因由现有 warning/message 信号报告。
+- 摄像头在独立推理线程重载会话并丢弃旧结果；文件分析在样本间切换，保留解码位置和事件索引，不重新录制视频。
+- 已执行 scripts/build-and-test.ps1：detection_backend_tests 7、source_index_tests 7、day3_mainwidget_tests 35、day3_monitor_task_tests 9，共 58 项通过、0 失败、0 跳过；主程序构建和干净环境启动/SQL 插件检查通过。真实模型使用 models/yolov8n.onnx，媒体为既有 people-2s.avi，本机 RTX 4060 验证 CPU/GPU/CPU 多次切换及缺少 GPU 运行库时回退。文件分析仍为 1 份分析、14 个样本、2 个事件。摄像头硬件热切换和长稳验收仍开放。
+- 本次报告：artifacts/verification/runs/20260929-175618-231/latest.json；界面截图：artifacts/verification/gpu-switch-ui/gpu-checkbox.png。测试结束后仅补充验收记录和运行说明，代码未再改动。
+
+## 2026-09-29 本程序资源占用百分比
+
+- 监控页新增独立资源行：CPU、GPU、内存，每秒异步刷新；不以全系统负载冒充本程序负载。
+- CPU = 本进程 kernel+user 时间增量 / 墙钟时间 / 全部逻辑 CPU 数；内存 = WorkingSetSize / 总物理内存（含共享页）。
+- GPU 使用 Windows PDH GPU Engine 计数器，只保留当前 PID，同一物理引擎上下文合并后取最忙引擎，覆盖本程序的推理/渲染/编解码。其他进程（如 NVIDIA 录屏）不计入。
+- 首次采样、计数器错误或平台不支持显示“—”，不伪造 0%；有效计数器中没有本进程实例时显示 0.0%。
+- 原生 API 在 ResourceMonitor 工作线程采样；退出唤醒线程并释放查询句柄。不更改检测开关、采集、录像和数据库。
+- 验证：resource_monitor_tests 已通过 6 项，覆盖多核 CPU 归一化、其他 PID 排除、最忙 GPU 引擎、不可用值及真实进程采样/退出。界面集成 day3_mainwidget_tests 最终 36 项通过、0 失败、0 跳过（含线程归属、重复关闭清理、登录退出和四路媒体回归）。主程序构建及干净环境依赖/SQL 插件启动检查通过。
+- 集成报告：artifacts/verification/runs/20260929-191736-440/latest.json；界面实测截图：artifacts/verification/resource-ui/process-resources.png。测试后仅更新本验收记录，代码不再改动。
+
+## 2026-09-29 回放控制优化
+
+- 完成独立本地视频事件入口的移除影响评估，详见 playback-optimization-2026-09-29.md；本次不删除既有入口、后台分析和媒体数据。
+- 四个控制按钮合并为播放/停止、暂停/继续。随真实播放器状态刷新，校验期间支持停止取消；保留原公开槽接口。
+- 新增真实视频播放、暂停、继续、停止、EOF、失败、退出及过期校验结果回归；day3_mainwidget_tests 37 项、gpu_file_workflow_tests 3 项通过，共 40 项通过、0 失败、0 跳过。主程序构建和干净环境依赖/SQL 插件检查通过。
+
+- 本次报告：artifacts/verification/runs/20260929-193007-294/latest.json；界面截图：artifacts/verification/playback-controls-ui/review-playback.png。验证后仅补齐验收记录，代码未再改动。
+
+## 2026-09-29 独立视频分析方案（仅设计）
+
+- 方案位于 docs/plans/2026-09-29-local-video-analysis-design.md，覆盖多批任务队列、有界并发、统一推理、任务/线程生命周期、断点恢复、独立分析日志和分阶段验收。
+- 本次仅写入方案与本记录；未修改运行代码、未执行数据库迁移。文中的新增功能和性能数值均为待实现设计/验收目标。

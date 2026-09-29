@@ -49,10 +49,18 @@ PlaybackPage::PlaybackPage(QWidget* parent)
         if (!item->data(Qt::UserRole + 2).toBool())
             play_selected_record();
     });
-    connect(btn_play_record, &QPushButton::clicked, this, &PlaybackPage::play_selected_record);
-    connect(btn_pause_playback, &QPushButton::clicked, this, &PlaybackPage::pause_playback);
-    connect(btn_resume_playback, &QPushButton::clicked, this, &PlaybackPage::resume_playback);
-    connect(btn_stop_playback, &QPushButton::clicked, this, &PlaybackPage::stop_playback);
+    connect(btn_play_record, &QPushButton::clicked, this, &PlaybackPage::togglePlayStop);
+    connect(btn_pause_playback, &QPushButton::clicked, this, &PlaybackPage::togglePauseResume);
+    connect(playback_player_, &QMediaPlayer::playbackStateChanged, this, [this](QMediaPlayer::PlaybackState state) {
+        if (state == QMediaPlayer::StoppedState) playback_requested_ = false;
+        updatePlaybackControls();
+    });
+    connect(playback_player_, &QMediaPlayer::errorOccurred, this, [this](QMediaPlayer::Error, const QString &error) {
+        playback_requested_ = false;
+        pending_playback_offset_ = -1;
+        lab_playback_status->setText("回放失败：" + error);
+        updatePlaybackControls();
+    });
     connect(btn_playback_snapshot, &QPushButton::clicked, this, &PlaybackPage::take_playback_snapshot);
     connect(playback_slider_, &QSlider::sliderReleased, this,
         [this]() { seek_playback(playback_slider_->value()); });
@@ -62,6 +70,11 @@ PlaybackPage::PlaybackPage(QWidget* parent)
     connect(playback_player_, &QMediaPlayer::durationChanged, this, &PlaybackPage::update_playback_duration);
     connect(
         playback_player_, &QMediaPlayer::mediaStatusChanged, this, [this](QMediaPlayer::MediaStatus status) {
+            if (status == QMediaPlayer::EndOfMedia || status == QMediaPlayer::InvalidMedia) {
+                playback_requested_ = false;
+                pending_playback_offset_ = -1;
+            }
+            updatePlaybackControls();
             if (status == QMediaPlayer::LoadedMedia || status == QMediaPlayer::BufferedMedia) {
                 if (pending_playback_offset_ >= 0) {
                     playback_player_->setPosition(
@@ -78,12 +91,15 @@ void PlaybackPage::setAccessEnabled(bool enabled)
     setEnabled(enabled);
     if (!enabled)
         resetSession();
+    updatePlaybackControls();
 }
 void PlaybackPage::resetSession()
 {
     ++source_playback_request_;
+    playback_requested_ = false;
     pending_playback_offset_ = -1;
     playback_player_->stop();
+    updatePlaybackControls();
     playback_player_->setSource(QUrl());
     current_playback_ = VideoRecord();
     current_video_page = 1;
@@ -309,17 +325,16 @@ void PlaybackPage::initUi()
     QHBoxLayout* playback_controls = new QHBoxLayout;
     btn_play_record = new QPushButton("播放");
     btn_pause_playback = new QPushButton("暂停");
-    btn_resume_playback = new QPushButton("继续");
-    btn_stop_playback = new QPushButton("停止");
+    btn_play_record->setObjectName("playStopButton");
+    btn_pause_playback->setObjectName("pauseResumeButton");
     btn_playback_snapshot = new QPushButton("回放截图");
     playback_speed_ = new QComboBox;
     playback_speed_->addItem("1×", 1.0);
     playback_speed_->addItem("2×", 2.0);
     playback_speed_->addItem("4×", 4.0);
-    const QList<QPushButton*> playback_buttons = { btn_play_record, btn_pause_playback, btn_resume_playback,
-        btn_stop_playback, btn_playback_snapshot };
+    const QList<QPushButton*> playback_buttons = { btn_play_record, btn_pause_playback, btn_playback_snapshot };
     for (QPushButton* button : playback_buttons) {
-        button->setObjectName("controlButton");
+        if (button->objectName().isEmpty()) button->setObjectName("controlButton");
         button->setMinimumHeight(38);
         playback_controls->addWidget(button);
     }
@@ -425,6 +440,44 @@ void PlaybackPage::play_selected_record()
     open_linked_video(item->data(Qt::UserRole + 1).toLongLong(), 0);
 }
 
+void PlaybackPage::updatePlaybackControls()
+{
+    const auto state = playback_player_->playbackState();
+    const bool failed = playback_player_->error() != QMediaPlayer::NoError
+        || playback_player_->mediaStatus() == QMediaPlayer::InvalidMedia;
+    const bool ended = playback_player_->mediaStatus() == QMediaPlayer::EndOfMedia;
+    const bool active = !failed && !ended && (playback_requested_ || state != QMediaPlayer::StoppedState);
+    btn_play_record->setText(active ? "停止" : "播放");
+    btn_play_record->setToolTip(active ? "停止当前回放或取消待处理的播放请求" : "播放选中的录像");
+    btn_play_record->setEnabled(accessEnabled_);
+    btn_pause_playback->setText(state == QMediaPlayer::PausedState ? "继续" : "暂停");
+    btn_pause_playback->setEnabled(accessEnabled_ && active && state != QMediaPlayer::StoppedState);
+}
+void PlaybackPage::togglePlayStop()
+{
+    if (!accessEnabled_) return;
+    const auto state = playback_player_->playbackState();
+    if (playback_requested_ || state != QMediaPlayer::StoppedState) {
+        stop_playback();
+        return;
+    }
+    // Linked playback may have no selected row in the current list.
+    const bool selected = source_tabs_->currentIndex() == 1
+        ? source_event_list_->currentItem() != nullptr : video_record_list->currentItem() != nullptr;
+    if (!selected && !current_playback_.path.isEmpty() && !playback_player_->source().isEmpty()) {
+        playback_requested_ = true;
+        playback_player_->setPosition(0);
+        playback_player_->play();
+        updatePlaybackControls();
+    } else play_selected_record();
+}
+void PlaybackPage::togglePauseResume()
+{
+    if (!accessEnabled_) return;
+    if (playback_player_->playbackState() == QMediaPlayer::PausedState) resume_playback();
+    else if (playback_player_->playbackState() == QMediaPlayer::PlayingState) pause_playback();
+}
+
 // 登录后暂停播放器，保留当前源与位置以便继续。
 void PlaybackPage::pause_playback()
 {
@@ -443,8 +496,10 @@ void PlaybackPage::resume_playback()
 void PlaybackPage::stop_playback()
 {
     ++source_playback_request_;
+    playback_requested_ = false;
     pending_playback_offset_ = -1;
     playback_player_->stop();
+    updatePlaybackControls();
 }
 
 // 读取组合框中的倍率并设置播放器播放速率，不改变文件编码 FPS。
@@ -502,6 +557,8 @@ void PlaybackPage::open_linked_video(qint64 id, qint64 offset)
     VideoRecord record;
     QString error;
     if (!video_service.findById(id, record, error) || !QFileInfo::exists(record.path)) {
+        playback_requested_ = false;
+        updatePlaybackControls();
         playback_player_->stop();
         playback_player_->setSource(QUrl());
         current_playback_ = VideoRecord();
@@ -513,6 +570,7 @@ void PlaybackPage::open_linked_video(qint64 id, qint64 offset)
     }
     btn_playback_snapshot->setEnabled(true);
     btn_playback_snapshot->setToolTip(QString());
+    playback_requested_ = false;
     current_playback_ = record;
     pending_playback_offset_ = qMax<qint64>(0, offset);
     lab_playback_status->setText(QStringLiteral("当前录像：%1").arg(record.name));
@@ -526,7 +584,9 @@ void PlaybackPage::open_linked_video(qint64 id, qint64 offset)
         playback_player_->setSource(source);
     }
     playback_player_->setPlaybackRate(playback_speed_->currentData().toDouble());
+    playback_requested_ = true;
     playback_player_->play();
+    updatePlaybackControls();
     emit auditRequested("回放", record.path);
 }
 
@@ -546,15 +606,19 @@ void PlaybackPage::play_source_event(QListWidgetItem* item)
     const auto row = item->data(Qt::UserRole).value<SourceEventRow>();
     btn_playback_snapshot->setEnabled(false);
     btn_playback_snapshot->setToolTip("双击左侧事件即可查看已保存的截图");
+    playback_requested_ = false;
     source_tabs_->setCurrentIndex(1);
     playback_player_->stop();
     playback_player_->setSource(QUrl());
     current_playback_ = VideoRecord();
     pending_playback_offset_ = -1;
+    updatePlaybackControls();
     if (!QFileInfo::exists(row.path)) {
         lab_playback_status->setText("找不到原视频，请点击“重新选择原视频”");
         return;
     }
+    playback_requested_ = true;
+    updatePlaybackControls();
     lab_playback_status->setText("正在校验原视频…");
     emit sourcePlaybackRequested(row, request);
 }
@@ -583,6 +647,8 @@ void PlaybackPage::receiveSourcePlayback(const SourceEventRow& row, quint64 requ
     if (request != source_playback_request_ || !accessEnabled_)
         return;
     if (!error.isEmpty()) {
+        playback_requested_ = false;
+        updatePlaybackControls();
         lab_playback_status->setText(error);
         return;
     }
@@ -590,7 +656,9 @@ void PlaybackPage::receiveSourcePlayback(const SourceEventRow& row, quint64 requ
     current_playback_.channelId = row.channels.section(',', 0, 0).toInt();
     pending_playback_offset_ = qMax<qint64>(0, row.startMs - 2000);
     playback_player_->setSource(QUrl::fromLocalFile(row.path));
+    playback_requested_ = true;
     playback_player_->play();
+    updatePlaybackControls();
     lab_playback_status->setText(
         QString("正在回放原视频 · 事件位于 %1 秒").arg(row.startMs / 1000.0, 0, 'f', 3));
 }

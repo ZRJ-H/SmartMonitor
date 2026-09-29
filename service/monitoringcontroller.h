@@ -4,6 +4,7 @@
 #include "sourceeventrow.h"
 #include <QObject>
 class SourceAnalysisWorker;
+class ResourceMonitor;
 #include "../model/channelconfig.h"
 #include "../model/video.h"
 #include "systemconfigservice.h"
@@ -18,6 +19,7 @@ public:
     explicit MonitoringController(QObject* parent = nullptr);
     ~MonitoringController() override;
     void initialize();
+    bool gpuEnabled() const { return gpu_enabled_; }
     void shutdown();
     bool detectionAllowed() const
     {
@@ -28,6 +30,8 @@ public:
         preview_delivery_enabled_.store(enabled);
     }
 public slots:
+    // Global runtime preference: false = CPU; true = GPU with CPU fallback.
+    void setGpuEnabled(bool enabled);
     void setChannels(const QList<ChannelConfig>& channels);
     void setStorage(const SystemConfig& config);
     void setDetection(bool enabled, const QString& model, double confidence);
@@ -41,6 +45,8 @@ public slots:
     void on_capture_state_changed(int channel, bool running);
     void on_person_detected(int channel, const QString& key, const QDateTime& time, double confidence);
 signals:
+    void resourceUsageReady(double cpu, double gpu, double memory);
+    void gpuPreferenceChanged(bool enabled);
     void frameReady(const cv::Mat& frame, int channel);
     void channelMessage(int channel, const QString& message);
     void captureError(int channel, const QString& message);
@@ -53,6 +59,9 @@ signals:
     void sourcePlaybackResolved(const SourceEventRow& row, quint64 request, const QString& error);
 
 private:
+    ResourceMonitor* resource_monitor_ = nullptr;
+    bool gpu_enabled_ = false;
+    void apply_gpu_preference();
     void init_workers();
     void shutdown_workers();
     void apply_detection_mode();

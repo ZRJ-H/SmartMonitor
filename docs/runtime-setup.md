@@ -37,6 +37,6 @@ Qt 的 `Using Qt multimedia with FFmpeg ...` 与“数据库连接成功”是�
 
 ## Windows GPU 与本地文件分析（2026-09-25）
 
-当前 GPU 使用 ONNX Runtime DirectML，在本机 RTX 4060 已完成真实推理。运行 scripts/setup-gpu-runtime.ps1 准备固定版本运行库，构建/部署自动放入 EXE 旁 gpu/ 并复制许可证；不安装 CUDA 工具链，不改系统 PATH。默认 auto，GPU 不可用会明确显示 CPU 降级原因。SMART_MONITOR_DETECTION_BACKEND=directml 为严格模式，失败不回退；cpu 用于对照。
+当前 GPU 使用 ONNX Runtime DirectML，在本机 RTX 4060 已完成真实推理。运行 scripts/setup-gpu-runtime.ps1 准备固定版本运行库，构建/部署自动放入 EXE 旁 gpu/ 并复制许可证；不安装 CUDA 工具链，不改系统 PATH。GUI 默认 CPU；登录后在监控页勾选“优先 GPU 加速”可热切换，取消切回 CPU，每次重启恢复 CPU。GPU 不可用会明确显示 CPU 降级原因。独立检测工具仍支持 SMART_MONITOR_DETECTION_BACKEND=directml 严格模式（失败不回退）、auto（GPU 优先并回退）、cpu（默认）；GUI 以运行时勾选项为准。
 
 本地视频不再被重复录制；在“回放 → 文件事件”查看按源时间去重的事件，单击定位原视频，双击查看一张代表截图。同内容多通道和重启复用结果，文件替换后重新分析。摄像头仍使用原录像规则。详细存储位置、备份和测试见 verification/gpu-recording-2026-09-25.md。

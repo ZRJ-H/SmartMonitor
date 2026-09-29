@@ -3,6 +3,7 @@
 // 本页拥有自己的控件和状态，通过公开接口及信号与其他模块交互。
 
 #include "monitorpage.h"
+#include "../service/resourcemonitor.h"
 #include "../service/imageservice.h"
 #include "../util/dbconn.h"
 #include "videolabel.h"
@@ -31,6 +32,9 @@ MonitorPage::MonitorPage(QWidget* parent)
         if (accessEnabled_)
             emit detectionToggleRequested(enabled);
     });
+    connect(gpu_enabled_box_, &QCheckBox::clicked, this, [this](bool enabled) {
+        if (accessEnabled_ && detectionAllowed_) emit gpuToggleRequested(enabled);
+    });
     auto snapshot = new QPushButton("预览截图", this);
     snapshot->setObjectName("previewSnapshotButton");
     findChild<QFrame*>("devicePanel")->layout()->addWidget(snapshot);
@@ -49,6 +53,7 @@ void MonitorPage::setAccessEnabled(bool enabled)
     btn_four->setEnabled(enabled);
     findChild<QPushButton*>("previewSnapshotButton")->setEnabled(enabled);
     detection_enabled_box_->setEnabled(enabled && detectionAllowed_);
+    gpu_enabled_box_->setEnabled(enabled && detectionAllowed_);
     for (int i = 0; i < 4; ++i) {
         latest_source_frames_[i].release();
         video_windows[i]->clear();
@@ -63,6 +68,18 @@ void MonitorPage::setDetectionState(bool enabled, bool allowed)
     const QSignalBlocker blocker(detection_enabled_box_);
     detection_enabled_box_->setChecked(allowed && enabled);
     detection_enabled_box_->setEnabled(accessEnabled_ && allowed);
+    gpu_enabled_box_->setEnabled(accessEnabled_ && allowed);
+}
+void MonitorPage::setGpuPreference(bool enabled)
+{
+    const QSignalBlocker blocker(gpu_enabled_box_);
+    gpu_enabled_box_->setChecked(enabled);
+}
+void MonitorPage::setResourceUsage(double cpu, double gpu, double memory)
+{
+    resource_cpu_->setText("CPU  " + ResourceMetrics::percentText(cpu));
+    resource_gpu_->setText("GPU  " + ResourceMetrics::percentText(gpu));
+    resource_memory_->setText("内存  " + ResourceMetrics::percentText(memory));
 }
 void MonitorPage::showMessage(const QString& message)
 {
@@ -191,8 +208,33 @@ void MonitorPage::initUi()
     control_layout->addWidget(btn_four);
     control_layout->addStretch();
     control_layout->addWidget(detection_enabled_box_);
+    gpu_enabled_box_ = new QCheckBox("优先 GPU 加速");
+    gpu_enabled_box_->setObjectName("gpuAccelerationSwitch");
+    gpu_enabled_box_->setChecked(false);
+    gpu_enabled_box_->setToolTip("默认 CPU。勾选后在运行中尝试 DirectML GPU，不可用时回退 CPU 并显示原因。取消后切回 CPU，无需重启；重启程序恢复 CPU。此选项不自动开启人形检测。");
+    control_layout->addWidget(gpu_enabled_box_);
 
     monitor_layout->addLayout(control_layout);
+    auto resourceRow = new QHBoxLayout;
+    resourceRow->setContentsMargins(18, 0, 18, 0);
+    resourceRow->setSpacing(24);
+    resourceRow->addWidget(new QLabel("本程序资源占用"));
+    resource_cpu_ = new QLabel("CPU  —");
+    resource_gpu_ = new QLabel("GPU  —");
+    resource_memory_ = new QLabel("内存  —");
+    resource_cpu_->setObjectName("processCpuUsage");
+    resource_gpu_->setObjectName("processGpuUsage");
+    resource_memory_->setObjectName("processMemoryUsage");
+    resource_cpu_->setToolTip("本程序 CPU 时间占全部逻辑处理器总时间的百分比，每秒刷新；— 表示尚无有效采样。");
+    resource_gpu_->setToolTip("仅本程序的 GPU 占用，取最忙引擎（含推理、渲染和编解码），不含其他进程；— 表示采样未就绪或系统不支持。");
+    resource_memory_->setToolTip("本程序驻留物理内存（含共享页）占整机物理内存的百分比，不是系统总内存占用。");
+    for(auto label : {resource_cpu_, resource_gpu_, resource_memory_}) {
+        label->setMinimumWidth(100);
+        label->setStyleSheet("font-weight:600;color:#a9ceff;");
+        resourceRow->addWidget(label);
+    }
+    resourceRow->addStretch();
+    monitor_layout->addLayout(resourceRow);
     lab_storage_warning = new QLabel;
     lab_storage_warning->setStyleSheet("color:#ffb74d;font-weight:bold;");
     lab_storage_warning->setWordWrap(true);

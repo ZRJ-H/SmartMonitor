@@ -88,6 +88,101 @@ class Day3MainWidgetTests : public QObject
     Q_OBJECT
 
 private slots:
+    void mergedPlaybackButtonsFollowPlayerAndCancelPendingRequests(){
+        QTemporaryDir dir;const auto path=dir.filePath("controls.avi");
+        cv::VideoWriter writer(path.toStdString(),cv::VideoWriter::fourcc('M','J','P','G'),25,cv::Size(64,48));
+        QVERIFY(writer.isOpened());for(int i=0;i<150;++i)writer.write(cv::Mat(48,64,CV_8UC3,cv::Scalar(i,40,80)));writer.release();
+        PlaybackPage page;page.setAccessEnabled(true);page.show();
+        auto play=page.findChild<QPushButton*>("playStopButton");
+        auto pause=page.findChild<QPushButton*>("pauseResumeButton");
+        auto player=page.findChild<QMediaPlayer*>();QVERIFY(play);QVERIFY(pause);QVERIFY(player);
+        QCOMPARE(play->text(),QString("播放"));QVERIFY(!pause->isEnabled());
+        SourceEventRow row;row.path=path;row.channels="1";row.startMs=0;row.endMs=5000;
+        page.receiveSourceEvents({row},0,1);
+        auto list=page.findChild<QListWidget*>("sourceEventList");QVERIFY(list);list->setCurrentRow(0);
+        QSignalSpy requests(&page,&PlaybackPage::sourcePlaybackRequested);
+        list->itemClicked(list->item(0));QCOMPARE(requests.count(),1);
+        QCOMPARE(play->text(),QString("停止"));QVERIFY(!pause->isEnabled());
+        const auto stale=requests.last()[1].toULongLong();
+        play->click();QCOMPARE(play->text(),QString("播放"));
+        page.receiveSourcePlayback(row,stale,{});QVERIFY(player->source().isEmpty());
+        play->click();QCOMPARE(requests.count(),2);
+        page.receiveSourcePlayback(row,requests.last()[1].toULongLong(),"测试校验失败");
+        QCOMPARE(play->text(),QString("播放"));QVERIFY(!pause->isEnabled());
+        play->click();page.receiveSourcePlayback(row,requests.last()[1].toULongLong(),{});
+        QTRY_COMPARE_WITH_TIMEOUT(player->playbackState(),QMediaPlayer::PlayingState,5000);
+        QTRY_VERIFY_WITH_TIMEOUT(player->duration()>0,5000);
+        QCOMPARE(play->text(),QString("停止"));QVERIFY(pause->isEnabled());
+        pause->click();QTRY_COMPARE(player->playbackState(),QMediaPlayer::PausedState);
+        QCOMPARE(pause->text(),QString("继续"));QCOMPARE(play->text(),QString("停止"));
+        pause->click();QTRY_COMPARE(player->playbackState(),QMediaPlayer::PlayingState);
+        QCOMPARE(pause->text(),QString("暂停"));
+        pause->click();play->click();QCOMPARE(player->playbackState(),QMediaPlayer::StoppedState);
+        QCOMPARE(play->text(),QString("播放"));QCOMPARE(pause->text(),QString("暂停"));QVERIFY(!pause->isEnabled());
+        play->click();page.receiveSourcePlayback(row,requests.last()[1].toULongLong(),{});
+        QTRY_COMPARE(player->playbackState(),QMediaPlayer::PlayingState);
+        QTRY_VERIFY(player->duration()>0);player->setPosition(player->duration()-80);
+        QTRY_COMPARE_WITH_TIMEOUT(player->mediaStatus(),QMediaPlayer::EndOfMedia,5000);
+        QCOMPARE(play->text(),QString("播放"));QVERIFY(!pause->isEnabled());
+        play->click();page.receiveSourcePlayback(row,requests.last()[1].toULongLong(),{});
+        QTRY_COMPARE(player->playbackState(),QMediaPlayer::PlayingState);
+        page.setAccessEnabled(false);QVERIFY(!play->isEnabled());QVERIFY(!pause->isEnabled());
+        QCOMPARE(play->text(),QString("播放"));QVERIFY(player->source().isEmpty());
+        page.setAccessEnabled(true);
+        const auto invalid=dir.filePath("invalid.avi");QFile file(invalid);QVERIFY(file.open(QIODevice::WriteOnly));file.write("not a video");file.close();
+        row.path=invalid;page.receiveSourceEvents({row},0,1);list->setCurrentRow(0);list->itemClicked(list->item(0));
+        page.receiveSourcePlayback(row,requests.last()[1].toULongLong(),{});
+        QTRY_VERIFY_WITH_TIMEOUT(player->error()!=QMediaPlayer::NoError,5000);
+        QCOMPARE(play->text(),QString("播放"));QVERIFY(!pause->isEnabled());
+    }
+    void resourcePercentagesUpdateWithoutBlockingUi(){
+        QTemporaryDir dir;QString error;QVERIFY(prepareBackgroundSources(dir,error));
+        const auto cleanup=qScopeGuard([]{clearBackgroundTestData();});
+        MainWidget widget;widget.setLoggedInUser(17,"admin17");widget.show();
+        auto cpu=widget.findChild<QLabel*>("processCpuUsage");
+        auto gpu=widget.findChild<QLabel*>("processGpuUsage");
+        auto memory=widget.findChild<QLabel*>("processMemoryUsage");
+        QVERIFY(cpu);QVERIFY(gpu);QVERIFY(memory);
+        QTimer heartbeat;int pulses=0;
+        connect(&heartbeat,&QTimer::timeout,this,[&]{++pulses;});heartbeat.start(20);
+        QTRY_VERIFY_WITH_TIMEOUT(cpu->text().contains('%') && memory->text().contains('%'),15000);
+        QVERIFY(pulses>5);
+        QVERIFY(gpu->text().contains('%') || gpu->text().contains(QStringLiteral("—")));
+        qInfo()<<cpu->text()<<gpu->text()<<memory->text();
+        auto page=widget.findChild<MonitorPage*>();QVERIFY(page);
+        page->setResourceUsage(-1,-1,-1);
+        QVERIFY(cpu->text().contains(QStringLiteral("—")));
+        QVERIFY(!gpu->text().contains("0.0%"));
+        QTRY_VERIFY_WITH_TIMEOUT(cpu->text().contains('%'),10000);
+        const auto capture=qEnvironmentVariable("SMART_MONITOR_UI_CAPTURE_DIR");
+        if(!capture.isEmpty()){
+            QDir().mkpath(capture);QVERIFY(widget.grab().save(capture+"/process-resources.png"));
+        }
+    }
+    void gpuCheckboxControlsRuntimePreference(){
+        QTemporaryDir dir;QString error;QVERIFY(prepareBackgroundSources(dir,error));
+        const auto cleanup=qScopeGuard([]{clearBackgroundTestData();});
+        {
+            MainWidget widget;
+            auto box=widget.findChild<QCheckBox*>("gpuAccelerationSwitch");QVERIFY(box);
+            auto controller=widget.findChild<MonitoringController*>();QVERIFY(controller);
+            QVERIFY(!box->isChecked());QVERIFY(!box->isEnabled());QVERIFY(!controller->gpuEnabled());
+            widget.setLoggedInUser(17,"admin17");QVERIFY(box->isEnabled());
+            QSignalSpy changes(controller,&MonitoringController::gpuPreferenceChanged);
+            box->click();QVERIFY(controller->gpuEnabled());QVERIFY(box->isChecked());
+            box->click();QVERIFY(!controller->gpuEnabled());QVERIFY(!box->isChecked());
+            controller->setGpuEnabled(true);QVERIFY(box->isChecked());
+            controller->setGpuEnabled(true);QCOMPARE(changes.count(),3);
+            auto capture=qEnvironmentVariable("SMART_MONITOR_UI_CAPTURE_DIR");
+            if(!capture.isEmpty()){
+                QDir().mkpath(capture);widget.show();QTest::qWait(100);
+                QVERIFY(widget.grab().save(capture+"/gpu-checkbox.png"));
+            }
+        }
+        MainWidget restarted;
+        QVERIFY(!restarted.findChild<QCheckBox*>("gpuAccelerationSwitch")->isChecked());
+        QVERIFY(!restarted.findChild<MonitoringController*>()->gpuEnabled());
+    }
     void logEventButtonsOpenMatchingImageAndRealVideo() {
         QTemporaryDir dir;QVERIFY(dir.isValid());
         const QString path=dir.filePath("linked-event.avi");
@@ -327,7 +422,8 @@ private slots:
     void guestStartsBackgroundWorkersAndRejectsFrames() {
         MainWidget widget;widget.show();QTest::qWait(20);
         const auto workers = widget.findChildren<QThread*>();
-        QCOMPARE(workers.size(),10);
+        QCOMPARE(workers.size(),11); // Existing 10 workers plus the resource sampler.
+        QVERIFY(widget.findChild<QThread*>("processResourceMonitor"));
         for(auto thread:workers) QVERIFY(thread->isRunning());
         QVERIFY(!widget.findChild<QPushButton*>("startPreviewButton"));
         cv::Mat frame(120,160,CV_8UC3,cv::Scalar(0,200,0));
@@ -337,7 +433,8 @@ private slots:
     void logoutKeepsWorkersClearsPreviewAndAllowsLoginAgain() {
         MainWidget widget;widget.show();QTest::qWait(20);
         const auto workers = widget.findChildren<QThread*>();
-        QCOMPARE(workers.size(),10);
+        QCOMPARE(workers.size(),11); // Existing 10 workers plus the resource sampler.
+        QVERIFY(widget.findChild<QThread*>("processResourceMonitor"));
         widget.setLoggedInUser(17,"admin17");
         QCOMPARE(widget.findChildren<QThread*>(),workers);
         QVERIFY(QMetaObject::invokeMethod(widget.findChild<QObject*>("monitoringController"),"on_capture_state_changed",Q_ARG(int,1),Q_ARG(bool,true)));
